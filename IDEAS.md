@@ -32,6 +32,12 @@ Not sure about stuff here, these are just ideas.
 
 Creatures are on a 1D line, friends on the left and foes on the right. Not sure how they move around and attack the other team tho ><.
 
+Here are some ideas:
+- You can move one (any) creature once per turn.
+- On some turns only the front creatures attack, and on some other turns all the creatures attack (in that order: front foe, front friend, second foe, second friend, thrid foe, etc.). Maybe there could be a random schedule that is displayed (for like 10 turns in advance), that could be fun ^^.
+
 No mana/cost to play cards! Maybe doing a one-card-per-turn Wildfrost style, or something else, but no mana/cost!
 
 There could be "spell" cards that do something when played (in addition to classic creature cards that can be placed on the battlefield). Maybe "spell" or "item" is a bad name here, idk. There could be "sells" that target a creature to do something to it (like give it 2 food or something), and there could be "spells" that just apply some effect to the whole battlefield (like "fwog wants to pee" card that makes rain fall (we could play with some ideas like that to use the fact that this is supposed to be a dream)).
+
+There shall be no limit to the number of friends! Maybe we sould find something to make it so that having too many friends is kinda bad but if we do that it must not feel like an arbitrary limit, instead it could be that due to some emergent mechanics having too many friends (creature cards in the deck) hinders something important idk.

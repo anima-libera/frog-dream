@@ -1,3 +1,4 @@
+use ggez::conf::WindowMode;
 use ggez::conf::WindowSetup;
 use ggez::event;
 use ggez::glam::*;
@@ -87,7 +88,12 @@ impl event::EventHandler<ggez::GameError> for Game {
 
 fn main() -> GameResult {
 	let cb = ggez::ContextBuilder::new("dream_frog", "Anima")
-		.window_setup(WindowSetup::default().title("Dream Frog"));
+		.window_setup(WindowSetup::default().title("Dream Frog"))
+		.window_mode(
+			WindowMode::default()
+				.resizable(true)
+				.dimensions(1200.0, 800.0),
+		);
 	let (ctx, event_loop) = cb.build()?;
 	let game = Game::new(&ctx)?;
 	event::run(ctx, event_loop, game)
