@@ -22,6 +22,7 @@ impl CardSpec {
 		spritesheet: &Image,
 		dst: Vec2,
 		hovered: bool,
+		selected: bool,
 	) -> GameResult {
 		let rectangle = graphics::Mesh::new_rectangle(
 			ctx,
@@ -30,6 +31,15 @@ impl CardSpec {
 			if hovered { Color::YELLOW } else { Color::WHITE },
 		)?;
 		canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+		if selected {
+			let rectangle = graphics::Mesh::new_rectangle(
+				ctx,
+				graphics::DrawMode::stroke(9.0),
+				Rect::new(dst.x, dst.y, CardSpec::DIMS.0, CardSpec::DIMS.1),
+				Color::from_rgb(255, 150, 180),
+			)?;
+			canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+		}
 
 		let (name, sprite) = match self {
 			CardSpec::Fwog => ("fwog", Rect::new(0.0, 0.2, 0.5, 0.4)),
@@ -71,6 +81,7 @@ struct Game {
 	battlefield: Battlefield,
 	hand: Vec<Card>,
 	hovered_card: Option<WhichCard>,
+	selected_card: Option<WhichCard>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -95,6 +106,7 @@ impl Game {
 			battlefield: Battlefield { friends, foes },
 			hand,
 			hovered_card: None,
+			selected_card: None,
 		})
 	}
 
@@ -159,6 +171,32 @@ impl event::EventHandler<ggez::GameError> for Game {
 		Ok(())
 	}
 
+	fn mouse_button_down_event(
+		&mut self,
+		_ctx: &mut Context,
+		button: event::MouseButton,
+		_x: f32,
+		_y: f32,
+	) -> GameResult {
+		if let event::MouseButton::Left = button {
+			self.selected_card = self.hovered_card;
+		}
+		Ok(())
+	}
+
+	fn mouse_button_up_event(
+		&mut self,
+		_ctx: &mut Context,
+		button: event::MouseButton,
+		_x: f32,
+		_y: f32,
+	) -> GameResult {
+		if let event::MouseButton::Left = button {
+			self.selected_card = None;
+		}
+		Ok(())
+	}
+
 	fn update(&mut self, _ctx: &mut Context) -> GameResult {
 		Ok(())
 	}
@@ -173,9 +211,8 @@ impl event::EventHandler<ggez::GameError> for Game {
 				&mut canvas,
 				&self.spritesheet,
 				self.card_rect(ctx.gfx.size(), which_card).point().into(),
-				self
-					.hovered_card
-					.is_some_and(|hovered| hovered == which_card),
+				self.hovered_card.as_ref() == Some(&which_card),
+				self.selected_card.as_ref() == Some(&which_card),
 			)?;
 		}
 		for (i, creature) in self.battlefield.foes.iter().enumerate() {
@@ -185,9 +222,8 @@ impl event::EventHandler<ggez::GameError> for Game {
 				&mut canvas,
 				&self.spritesheet,
 				self.card_rect(ctx.gfx.size(), which_card).point().into(),
-				self
-					.hovered_card
-					.is_some_and(|hovered| hovered == which_card),
+				self.hovered_card.as_ref() == Some(&which_card),
+				self.selected_card.as_ref() == Some(&which_card),
 			)?;
 		}
 
@@ -198,10 +234,21 @@ impl event::EventHandler<ggez::GameError> for Game {
 				&mut canvas,
 				&self.spritesheet,
 				self.card_rect(ctx.gfx.size(), which_card).point().into(),
-				self
-					.hovered_card
-					.is_some_and(|hovered| hovered == which_card),
+				self.hovered_card.as_ref() == Some(&which_card),
+				self.selected_card.as_ref() == Some(&which_card),
 			)?;
+		}
+
+		if let Some(selected_card) = self.selected_card {
+			let selected_card_pos = self.card_rect(ctx.gfx.size(), selected_card).center();
+			let cursor_pos = ctx.mouse.position();
+			let line = graphics::Mesh::new_line(
+				ctx,
+				&[selected_card_pos, cursor_pos],
+				12.0,
+				Color::from_rgb(255, 150, 180),
+			)?;
+			canvas.draw(&line, Vec2::new(0.0, 0.0));
 		}
 
 		canvas.finish(ctx)?;
