@@ -134,8 +134,8 @@ impl event::EventHandler<ggez::GameError> for Game {
 }
 
 fn main() -> GameResult {
-	let cb = ggez::ContextBuilder::new("dream_frog", "Anima")
-		.window_setup(WindowSetup::default().title("Dream Frog"))
+	let cb = ggez::ContextBuilder::new("frog_dream", "Anima")
+		.window_setup(WindowSetup::default().title("Frog Dream"))
 		.window_mode(
 			WindowMode::default()
 				.resizable(true)
