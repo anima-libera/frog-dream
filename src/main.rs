@@ -13,18 +13,21 @@ enum CardSpec {
 }
 
 impl CardSpec {
+	const DIMS: (f32, f32) = (200.0, 250.0);
+
 	fn draw(
 		&self,
 		ctx: &mut Context,
 		canvas: &mut Canvas,
 		spritesheet: &Image,
 		dst: Vec2,
+		hovered: bool,
 	) -> GameResult {
 		let rectangle = graphics::Mesh::new_rectangle(
 			ctx,
 			graphics::DrawMode::stroke(3.0),
-			Rect::new(dst.x, dst.y, 200.0, 250.0),
-			Color::WHITE,
+			Rect::new(dst.x, dst.y, CardSpec::DIMS.0, CardSpec::DIMS.1),
+			if hovered { Color::YELLOW } else { Color::WHITE },
 		)?;
 		canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
 
@@ -67,6 +70,14 @@ struct Game {
 	spritesheet: Image,
 	battlefield: Battlefield,
 	hand: Vec<Card>,
+	hovered_card: Option<WhichCard>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WhichCard {
+	BattlefieldFriend(usize),
+	BattlefieldFoe(usize),
+	Hand(usize),
 }
 
 impl Game {
@@ -83,11 +94,71 @@ impl Game {
 			spritesheet: Image::from_bytes(ctx, include_bytes!("../assets/spritesheet.png"))?,
 			battlefield: Battlefield { friends, foes },
 			hand,
+			hovered_card: None,
 		})
+	}
+
+	fn card_rect(&self, ctx_size: (f32, f32), which_card: WhichCard) -> Rect {
+		match which_card {
+			WhichCard::BattlefieldFriend(i) => Rect::new(
+				ctx_size.0 / 2.0 - 40.0 - CardSpec::DIMS.0 * (i as f32 + 1.0),
+				100.0,
+				CardSpec::DIMS.0,
+				CardSpec::DIMS.1,
+			),
+			WhichCard::BattlefieldFoe(i) => Rect::new(
+				ctx_size.0 / 2.0 + 40.0 + CardSpec::DIMS.0 * i as f32,
+				100.0,
+				CardSpec::DIMS.0,
+				CardSpec::DIMS.1,
+			),
+			WhichCard::Hand(i) => Rect::new(
+				ctx_size.0 / 2.0 - (CardSpec::DIMS.0 + 10.0) / 2.0 * self.hand.len() as f32
+					+ (CardSpec::DIMS.0 + 10.0) * i as f32,
+				500.0,
+				CardSpec::DIMS.0,
+				CardSpec::DIMS.1,
+			),
+		}
+	}
+
+	fn all_cards(&self) -> Vec<WhichCard> {
+		let mut cards = vec![];
+		for i in 0..self.battlefield.friends.len() {
+			cards.push(WhichCard::BattlefieldFriend(i));
+		}
+		for i in 0..self.battlefield.foes.len() {
+			cards.push(WhichCard::BattlefieldFoe(i));
+		}
+		for i in 0..self.hand.len() {
+			cards.push(WhichCard::Hand(i));
+		}
+		cards
 	}
 }
 
 impl event::EventHandler<ggez::GameError> for Game {
+	fn mouse_motion_event(
+		&mut self,
+		ctx: &mut Context,
+		x: f32,
+		y: f32,
+		_dx: f32,
+		_dy: f32,
+	) -> GameResult {
+		for card in self.all_cards() {
+			if self
+				.card_rect(ctx.gfx.size(), card)
+				.contains(Vec2::new(x, y))
+			{
+				self.hovered_card = Some(card);
+				return Ok(());
+			}
+		}
+		self.hovered_card = None;
+		Ok(())
+	}
+
 	fn update(&mut self, _ctx: &mut Context) -> GameResult {
 		Ok(())
 	}
@@ -96,35 +167,40 @@ impl event::EventHandler<ggez::GameError> for Game {
 		let mut canvas = Canvas::from_frame(ctx, graphics::Color::from([0.1, 0.2, 0.3, 1.0]));
 
 		for (i, creature) in self.battlefield.friends.iter().enumerate() {
+			let which_card = WhichCard::BattlefieldFriend(i);
 			creature.card_spec.draw(
 				ctx,
 				&mut canvas,
 				&self.spritesheet,
-				Vec2 {
-					x: ctx.gfx.size().0 / 2.0 - 40.0 - 200.0 * (i as f32 + 1.0),
-					y: 100.0,
-				},
+				self.card_rect(ctx.gfx.size(), which_card).point().into(),
+				self
+					.hovered_card
+					.is_some_and(|hovered| hovered == which_card),
 			)?;
 		}
 		for (i, creature) in self.battlefield.foes.iter().enumerate() {
+			let which_card = WhichCard::BattlefieldFoe(i);
 			creature.card_spec.draw(
 				ctx,
 				&mut canvas,
 				&self.spritesheet,
-				Vec2 { x: ctx.gfx.size().0 / 2.0 + 40.0 + 200.0 * i as f32, y: 100.0 },
+				self.card_rect(ctx.gfx.size(), which_card).point().into(),
+				self
+					.hovered_card
+					.is_some_and(|hovered| hovered == which_card),
 			)?;
 		}
 
-		let hand_len = self.hand.len();
 		for (i, card) in self.hand.iter().enumerate() {
+			let which_card = WhichCard::Hand(i);
 			card.card_spec.draw(
 				ctx,
 				&mut canvas,
 				&self.spritesheet,
-				Vec2 {
-					x: ctx.gfx.size().0 / 2.0 - 105.0 * hand_len as f32 + 210.0 * i as f32,
-					y: 500.0,
-				},
+				self.card_rect(ctx.gfx.size(), which_card).point().into(),
+				self
+					.hovered_card
+					.is_some_and(|hovered| hovered == which_card),
 			)?;
 		}
 
