@@ -179,36 +179,79 @@ impl Game {
 		})
 	}
 
-	fn creature_rect(&self, which_creature: WhichBattlefieldCreature) -> Rect {
-		let x = match which_creature {
-			WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i)) => {
-				// If a creature is being placed, other creatures might have to make space, smoothly.
-				let animation_offset = if let Some(Animation {
-					tp,
-					what: AnimationWhat::PlacingCreatureFromHand { dst_friend_index, .. },
-				}) = &self.animation
+	/// Returns what must be the rect of the given creature.
+	/// If `not_inserted_yet` then this returns the destination rect
+	/// of the card insertion animation.
+	fn creature_rect(
+		&self,
+		which_creature: WhichBattlefieldCreature,
+		not_inserted_yet: bool,
+	) -> Rect {
+		// If a creature is being placed, other creatures might have to make space, smoothly.
+		// `animation_len_offset` is an offset to the length (in number of cards) of the batlefield,
+		// so that it can behaves like the number of cards is decremented but smoothly.
+		let (animation_offset, animation_len_offset) = if let Some(Animation {
+			tp,
+			what: AnimationWhat::PlacingCreatureFromHand { dst_friend_index, .. },
+		}) = &self.animation
+		{
+			// A creature is being placed...
+			match which_creature {
+				WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i))
+					if *dst_friend_index > i =>
 				{
-					// A creature is being placed...
-					if *dst_friend_index <= i {
-						// ... and the one we are intrested in here has to make space.
-						(CardSpec::DIMS.0 + 10.0) * tp.progression()
-					} else {
-						// ... and the one we are intrested in here happens to not have to move.
-						0.0
-					}
-				} else {
-					0.0
-				};
-
-				self.canvas_size.0 / 2.0
-					- 40.0 - (CardSpec::DIMS.0 + 10.0) * (i as f32 + 1.0)
-					- animation_offset
-			},
-
-			WhichBattlefieldCreature::Foe(WhichBattlefieldFoe(i)) => {
-				self.canvas_size.0 / 2.0 + 40.0 + (CardSpec::DIMS.0 + 10.0) * i as f32
-			},
+					// ... and the one we are intrested in here has to make space.
+					(
+						(CardSpec::DIMS.0 + 10.0) * tp.progression(),
+						tp.progression(),
+					)
+				},
+				WhichBattlefieldCreature::Foe(_) => {
+					// ... and the one we are intrested in here has to make space.
+					(
+						(CardSpec::DIMS.0 + 10.0) * tp.progression(),
+						tp.progression(),
+					)
+				},
+				_ => {
+					// ... and the one we are intrested in here happens to not have to move.
+					(0.0, tp.progression())
+				},
+			}
+		} else {
+			(0.0, 0.0)
 		};
+
+		let insertion_offset = if not_inserted_yet {
+			// I have no idea why this must be -1 and not the intuitive 1, whatever xd.
+			-1.0
+		} else {
+			0.0
+		};
+
+		let x =
+			match which_creature {
+				WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i)) => {
+					self.canvas_size.0 / 2.0
+						- (CardSpec::DIMS.0 + 10.0) / 2.0
+							* ((self.battlefield.friends.len() + self.battlefield.foes.len()) as f32
+								+ animation_len_offset + insertion_offset)
+						+ 10.0 / 2.0 - 40.0
+						+ (CardSpec::DIMS.0 + 10.0)
+							* (self.battlefield.friends.len() as isize - i as isize - 1) as f32
+						+ animation_offset
+				},
+
+				WhichBattlefieldCreature::Foe(WhichBattlefieldFoe(i)) => {
+					self.canvas_size.0 / 2.0
+						- (CardSpec::DIMS.0 + 10.0) / 2.0
+							* ((self.battlefield.friends.len() + self.battlefield.foes.len()) as f32
+								+ animation_len_offset + insertion_offset)
+						+ 10.0 / 2.0 + 40.0
+						+ (CardSpec::DIMS.0 + 10.0) * (self.battlefield.friends.len() + i) as f32
+						+ animation_offset
+				},
+			};
 
 		Rect::new(x, 100.0, CardSpec::DIMS.0, CardSpec::DIMS.1)
 	}
@@ -254,7 +297,7 @@ impl Game {
 
 		for (i, _creature) in self.battlefield.friends.iter().enumerate() {
 			let which_creature = WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i));
-			let rect = self.creature_rect(which_creature);
+			let rect = self.creature_rect(which_creature, false);
 			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
 			let what = InterfaceElementWhat::Creature(which_creature);
 			self.interface_elements.push(InterfaceElement {
@@ -267,7 +310,7 @@ impl Game {
 		}
 		for (i, _creature) in self.battlefield.foes.iter().enumerate() {
 			let which_creature = WhichBattlefieldCreature::Foe(WhichBattlefieldFoe(i));
-			let rect = self.creature_rect(which_creature);
+			let rect = self.creature_rect(which_creature, false);
 			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
 			let what = InterfaceElementWhat::Creature(which_creature);
 			self.interface_elements.push(InterfaceElement {
@@ -294,16 +337,19 @@ impl Game {
 			});
 		}
 
-		let display_insert_possibilities = if let Some(WhichHandCard(i)) = self.selected_hand_card {
+		let display_insert_slots = if let Some(WhichHandCard(i)) = self.selected_hand_card {
 			let selected_card = &self.hand[i];
 			selected_card.card_spec.is_creature()
 		} else {
 			false
 		};
-		if display_insert_possibilities {
+		if display_insert_slots {
 			for i in 0..(self.battlefield.friends.len() + 1) {
 				let x = self
-					.creature_rect(WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i)))
+					.creature_rect(
+						WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i)),
+						false,
+					)
 					.right() + 5.0;
 				let w = 50.0;
 				let rect = Rect::new(x - w / 2.0, 100.0 + CardSpec::DIMS.1 + 10.0, w, 50.0);
@@ -411,9 +457,10 @@ impl Game {
 			.point()
 			.into();
 		let dst_point = self
-			.creature_rect(WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(
-				dst_friend_index,
-			)))
+			.creature_rect(
+				WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(dst_friend_index)),
+				true,
+			)
 			.point()
 			.into();
 		let card = self.hand.remove(src_hand_index);
