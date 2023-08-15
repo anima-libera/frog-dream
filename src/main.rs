@@ -40,7 +40,9 @@ impl CardSpec {
 			ctx,
 			DrawMode::stroke(3.0),
 			Rect::new(dst.x, dst.y, CardSpec::DIMS.0, CardSpec::DIMS.1),
-			if params.hovered {
+			if params.hovered && params.targetable {
+				Color::from_rgb(180, 255, 0)
+			} else if params.hovered {
 				Color::YELLOW
 			} else if params.targetable {
 				Color::CYAN
@@ -77,17 +79,45 @@ impl CardSpec {
 				.src(sprite),
 		);
 
+		match self {
+			CardSpec::Food => {
+				canvas.draw(
+					Text::new("apply 2 food").set_scale(20.0),
+					DrawParam::from(Vec2::new(dst.x + 10.0, dst.y + 175.0)).color(Color::WHITE),
+				);
+			},
+			CardSpec::Fwog => {},
+			CardSpec::DragonFly => {},
+		}
+
 		Ok(())
 	}
 }
 
 struct Creature {
 	card_spec: CardSpec,
+	food: u32,
 }
 
 struct Battlefield {
 	friends: Vec<Creature>,
 	foes: Vec<Creature>,
+}
+
+impl Battlefield {
+	fn _get(&self, which_creature: WhichBattlefieldCreature) -> &Creature {
+		match which_creature {
+			WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i)) => &self.friends[i],
+			WhichBattlefieldCreature::Foe(WhichBattlefieldFoe(i)) => &self.foes[i],
+		}
+	}
+
+	fn get_mut(&mut self, which_creature: WhichBattlefieldCreature) -> &mut Creature {
+		match which_creature {
+			WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i)) => &mut self.friends[i],
+			WhichBattlefieldCreature::Foe(WhichBattlefieldFoe(i)) => &mut self.foes[i],
+		}
+	}
 }
 
 #[derive(Clone)]
@@ -104,6 +134,7 @@ enum InterfaceElementWhat {
 	FriendInsertionSlot(usize),
 	/// A card floating around (for example when moving during an animation).
 	Card(Card),
+	Food,
 }
 
 struct InterfaceElement {
@@ -134,6 +165,12 @@ enum AnimationWhat {
 		src_hand_index: usize,
 		dst_friend_index: usize,
 		card: Card,
+		src_point: Vec2,
+		dst_point: Vec2,
+	},
+	ApplyingFoodFromHand {
+		src_hand_index: usize,
+		dst_creature: WhichBattlefieldCreature,
 		src_point: Vec2,
 		dst_point: Vec2,
 	},
@@ -170,8 +207,8 @@ struct WhichHandCard(usize);
 
 impl Game {
 	fn new(ctx: &Context) -> GameResult<Game> {
-		let friends = vec![Creature { card_spec: CardSpec::Fwog }];
-		let foes = vec![Creature { card_spec: CardSpec::DragonFly }];
+		let friends = vec![Creature { card_spec: CardSpec::Fwog, food: 0 }];
+		let foes = vec![Creature { card_spec: CardSpec::DragonFly, food: 0 }];
 		let hand = vec![
 			Card { card_spec: CardSpec::Fwog },
 			Card { card_spec: CardSpec::Fwog },
@@ -270,12 +307,14 @@ impl Game {
 	fn hand_card_rect(&self, which_hand_card: WhichHandCard) -> Rect {
 		let x = match which_hand_card {
 			WhichHandCard(i) => {
-				// If a creature is being placed, other hand cards might have fill the gap, smoothly.
+				// If a card is being played, other hand cards might have fill the gap, smoothly.
 				// `animation_len_offset` is an offset to the length (in number of cards) of the hand,
 				// so that it can behaves like the number of cards is decremented but smoothly.
 				let (animation_offset, animation_len_offset) = if let Some(Animation {
 					tp,
-					what: AnimationWhat::PlacingCreatureFromHand { src_hand_index, .. },
+					what:
+						AnimationWhat::PlacingCreatureFromHand { src_hand_index, .. }
+						| AnimationWhat::ApplyingFoodFromHand { src_hand_index, .. },
 				}) = &self.animation
 				{
 					// A creature is being placed...
@@ -306,6 +345,13 @@ impl Game {
 	fn refresh_interface(&mut self) {
 		self.interface_elements.clear();
 
+		let creatures_are_targetable = if let Some(WhichHandCard(i)) = self.selected_hand_card {
+			let selected_card = &self.hand[i];
+			matches!(selected_card.card_spec, CardSpec::Food)
+		} else {
+			false
+		};
+
 		for (i, _creature) in self.battlefield.friends.iter().enumerate() {
 			let which_creature = WhichBattlefieldCreature::Friend(WhichBattlefieldFriend(i));
 			let rect = self.creature_rect(which_creature, false);
@@ -315,7 +361,7 @@ impl Game {
 				rect,
 				hovered,
 				selected: false,
-				targetable: false,
+				targetable: creatures_are_targetable,
 				what,
 			});
 		}
@@ -328,7 +374,7 @@ impl Game {
 				rect,
 				hovered,
 				selected: false,
-				targetable: false,
+				targetable: creatures_are_targetable,
 				what,
 			});
 		}
@@ -393,6 +439,19 @@ impl Game {
 						what: InterfaceElementWhat::Card(card.clone()),
 					});
 				},
+				AnimationWhat::ApplyingFoodFromHand { src_point, dst_point, .. } => {
+					let pos = Vec2::new(
+						lerp(progression, src_point.x, dst_point.x),
+						lerp(progression, src_point.y, dst_point.y),
+					);
+					self.interface_elements.push(InterfaceElement {
+						rect: Rect::new(pos.x, pos.y, 0.0, 0.0),
+						hovered: false,
+						selected: false,
+						targetable: false,
+						what: InterfaceElementWhat::Food,
+					});
+				},
 			}
 		}
 	}
@@ -447,6 +506,22 @@ impl Game {
 							targetable: elem.targetable,
 						},
 					)?;
+					if creature.food >= 1 {
+						let food = creature.food;
+						let sprite = Rect::new(0.0, 0.62, 0.5, 0.38);
+						canvas.draw(
+							&self.spritesheet,
+							DrawParam::default()
+								.dest(Vec2::new(elem.rect.left(), elem.rect.top() - 35.0))
+								.scale(Vec2::new(0.04, 0.04))
+								.src(sprite),
+						);
+						canvas.draw(
+							Text::new(format!("{food}")).set_scale(26.0),
+							DrawParam::from(Vec2::new(elem.rect.left() + 45.0, elem.rect.top() - 35.0))
+								.color(Color::from_rgb(255, 200, 140)),
+						);
+					}
 				},
 				InterfaceElementWhat::FriendInsertionSlot(_index) => {
 					let rectangle = Mesh::new_polyline(
@@ -459,12 +534,25 @@ impl Game {
 							Vec2::new(elem.rect.center().x, elem.rect.top()),
 						],
 						if elem.hovered {
-							Color::YELLOW
+							Color::from_rgb(180, 255, 0)
 						} else {
 							Color::CYAN
 						},
 					)?;
 					canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+				},
+				InterfaceElementWhat::Food => {
+					let sprite = Rect::new(0.0, 0.62, 0.5, 0.38);
+					canvas.draw(
+						&self.spritesheet,
+						DrawParam::default()
+							.dest(ggez::mint::Point2::<f32>::from(Vec2::new(
+								elem.rect.x - sprite.w / 2.0,
+								elem.rect.y - sprite.h / 2.0,
+							)))
+							.scale(Vec2::new(0.1, 0.1))
+							.src(sprite),
+					);
 				},
 			}
 		}
@@ -491,6 +579,29 @@ impl Game {
 				src_hand_index,
 				dst_friend_index,
 				card,
+				src_point,
+				dst_point,
+			},
+		});
+	}
+
+	fn apply_food_from_hand(
+		&mut self,
+		src_hand_index: usize,
+		dst_creature: WhichBattlefieldCreature,
+	) {
+		let src_point = self
+			.hand_card_rect(WhichHandCard(src_hand_index))
+			.center()
+			.into();
+		let dst_point = self.creature_rect(dst_creature, false).center().into();
+		self.hand.remove(src_hand_index);
+		let duration = Duration::from_secs_f32(0.2);
+		self.animation = Some(Animation {
+			tp: TimeProgression::with_duration(duration),
+			what: AnimationWhat::ApplyingFoodFromHand {
+				src_hand_index,
+				dst_creature,
 				src_point,
 				dst_point,
 			},
@@ -563,6 +674,12 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 						// It shall translate in this card's creature being placed on the battlefield
 						// on the chosen spot.
 						self.place_creature_from_hand(src_hand_index, *dst_friend_index);
+					} else if let (
+						InterfaceElementWhat::Creature(dst_creature),
+						Some(WhichHandCard(src_hand_index)),
+					) = (&interface_element.what, self.selected_hand_card)
+					{
+						self.apply_food_from_hand(src_hand_index, *dst_creature);
 					}
 					break;
 				}
@@ -587,10 +704,13 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 			if tp.progression() >= 1.0 {
 				match self.animation.take().unwrap().what {
 					AnimationWhat::PlacingCreatureFromHand { dst_friend_index, card, .. } => {
-						self
-							.battlefield
-							.friends
-							.insert(dst_friend_index, Creature { card_spec: card.card_spec });
+						self.battlefield.friends.insert(
+							dst_friend_index,
+							Creature { card_spec: card.card_spec, food: 0 },
+						);
+					},
+					AnimationWhat::ApplyingFoodFromHand { dst_creature, .. } => {
+						self.battlefield.get_mut(dst_creature).food += 2;
 					},
 				}
 			}
