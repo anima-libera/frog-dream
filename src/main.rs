@@ -76,10 +76,27 @@ struct Card {
 	card_spec: CardSpec,
 }
 
+enum InterfaceElementWhat {
+	Card(WhichCard),
+	Creature(WhichCard),
+	FriendInsertionPossibility(usize),
+}
+
+struct InterfaceElement {
+	rect: Rect,
+	hovered: bool,
+	selected: bool,
+	targetable: bool,
+	what: InterfaceElementWhat,
+}
+
 struct Game {
 	spritesheet: Image,
+	canvas_size: (f32, f32),
 	battlefield: Battlefield,
 	hand: Vec<Card>,
+	interface_elements: Vec<InterfaceElement>,
+	cursor_pos: Option<Vec2>,
 	hovered_card: Option<WhichCard>,
 	selected_card: Option<WhichCard>,
 }
@@ -103,29 +120,32 @@ impl Game {
 		];
 		Ok(Game {
 			spritesheet: Image::from_bytes(ctx, include_bytes!("../assets/spritesheet.png"))?,
+			canvas_size: ctx.gfx.size(),
 			battlefield: Battlefield { friends, foes },
 			hand,
+			interface_elements: vec![],
+			cursor_pos: None,
 			hovered_card: None,
 			selected_card: None,
 		})
 	}
 
-	fn card_rect(&self, ctx_size: (f32, f32), which_card: WhichCard) -> Rect {
+	fn card_rect(&self, which_card: WhichCard) -> Rect {
 		match which_card {
 			WhichCard::BattlefieldFriend(i) => Rect::new(
-				ctx_size.0 / 2.0 - 40.0 - CardSpec::DIMS.0 * (i as f32 + 1.0),
+				self.canvas_size.0 / 2.0 - 40.0 - CardSpec::DIMS.0 * (i as f32 + 1.0),
 				100.0,
 				CardSpec::DIMS.0,
 				CardSpec::DIMS.1,
 			),
 			WhichCard::BattlefieldFoe(i) => Rect::new(
-				ctx_size.0 / 2.0 + 40.0 + CardSpec::DIMS.0 * i as f32,
+				self.canvas_size.0 / 2.0 + 40.0 + CardSpec::DIMS.0 * i as f32,
 				100.0,
 				CardSpec::DIMS.0,
 				CardSpec::DIMS.1,
 			),
 			WhichCard::Hand(i) => Rect::new(
-				ctx_size.0 / 2.0 - (CardSpec::DIMS.0 + 10.0) / 2.0 * self.hand.len() as f32
+				self.canvas_size.0 / 2.0 - (CardSpec::DIMS.0 + 10.0) / 2.0 * self.hand.len() as f32
 					+ (CardSpec::DIMS.0 + 10.0) * i as f32,
 				500.0,
 				CardSpec::DIMS.0,
@@ -147,27 +167,118 @@ impl Game {
 		}
 		cards
 	}
+
+	fn refresh_interface(&mut self) {
+		self.interface_elements.clear();
+
+		for (i, _creature) in self.battlefield.friends.iter().enumerate() {
+			let which_card = WhichCard::BattlefieldFriend(i);
+			let rect = self.card_rect(which_card);
+			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
+			let selected = self.selected_card == Some(which_card);
+			let targetable = false;
+			let what = InterfaceElementWhat::Creature(which_card);
+			self.interface_elements.push(InterfaceElement {
+				rect,
+				hovered,
+				selected,
+				targetable,
+				what,
+			});
+		}
+		for (i, _creature) in self.battlefield.foes.iter().enumerate() {
+			let which_card = WhichCard::BattlefieldFoe(i);
+			let rect = self.card_rect(which_card);
+			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
+			let selected = self.selected_card == Some(which_card);
+			let targetable = false;
+			let what = InterfaceElementWhat::Creature(which_card);
+			self.interface_elements.push(InterfaceElement {
+				rect,
+				hovered,
+				selected,
+				targetable,
+				what,
+			});
+		}
+
+		for (i, _card) in self.hand.iter().enumerate() {
+			let which_card = WhichCard::Hand(i);
+			let rect = self.card_rect(which_card);
+			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
+			let selected = self.selected_card == Some(which_card);
+			let targetable = false;
+			let what = InterfaceElementWhat::Card(which_card);
+			self.interface_elements.push(InterfaceElement {
+				rect,
+				hovered,
+				selected,
+				targetable,
+				what,
+			});
+		}
+	}
+
+	fn draw_interface(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult {
+		for elem in self.interface_elements.iter() {
+			match elem.what {
+				InterfaceElementWhat::Card(which_card) => {
+					let card = match which_card {
+						WhichCard::Hand(i) => &self.hand[i],
+						_ => panic!("bug: cards are supposed to be in the hand"),
+					};
+					card.card_spec.draw(
+						ctx,
+						canvas,
+						&self.spritesheet,
+						elem.rect.point().into(),
+						elem.hovered,
+						elem.selected,
+					)?;
+				},
+				InterfaceElementWhat::Creature(which_card) => {
+					let card = match which_card {
+						WhichCard::BattlefieldFriend(i) => &self.battlefield.friends[i],
+						WhichCard::BattlefieldFoe(i) => &self.battlefield.foes[i],
+						_ => panic!("bug: creatures are supposed to be on the battle field"),
+					};
+					card.card_spec.draw(
+						ctx,
+						canvas,
+						&self.spritesheet,
+						elem.rect.point().into(),
+						elem.hovered,
+						elem.selected,
+					)?;
+				},
+				InterfaceElementWhat::FriendInsertionPossibility(index) => {
+					todo!()
+				},
+			}
+		}
+		Ok(())
+	}
 }
 
 impl event::EventHandler<ggez::GameError> for Game {
 	fn mouse_motion_event(
 		&mut self,
-		ctx: &mut Context,
+		_ctx: &mut Context,
 		x: f32,
 		y: f32,
 		_dx: f32,
 		_dy: f32,
 	) -> GameResult {
+		self.cursor_pos = Some(Vec2::new(x, y));
 		for card in self.all_cards() {
-			if self
-				.card_rect(ctx.gfx.size(), card)
-				.contains(Vec2::new(x, y))
-			{
+			if self.card_rect(card).contains(Vec2::new(x, y)) {
 				self.hovered_card = Some(card);
+				self.refresh_interface();
 				return Ok(());
 			}
 		}
 		self.hovered_card = None;
+		self.refresh_interface();
 		Ok(())
 	}
 
@@ -181,6 +292,7 @@ impl event::EventHandler<ggez::GameError> for Game {
 		if let event::MouseButton::Left = button {
 			self.selected_card = self.hovered_card;
 		}
+		self.refresh_interface();
 		Ok(())
 	}
 
@@ -194,6 +306,13 @@ impl event::EventHandler<ggez::GameError> for Game {
 		if let event::MouseButton::Left = button {
 			self.selected_card = None;
 		}
+		self.refresh_interface();
+		Ok(())
+	}
+
+	fn resize_event(&mut self, _ctx: &mut Context, width: f32, height: f32) -> GameResult {
+		self.canvas_size = (width, height);
+		self.refresh_interface();
 		Ok(())
 	}
 
@@ -204,43 +323,10 @@ impl event::EventHandler<ggez::GameError> for Game {
 	fn draw(&mut self, ctx: &mut Context) -> GameResult {
 		let mut canvas = Canvas::from_frame(ctx, graphics::Color::from([0.1, 0.2, 0.3, 1.0]));
 
-		for (i, creature) in self.battlefield.friends.iter().enumerate() {
-			let which_card = WhichCard::BattlefieldFriend(i);
-			creature.card_spec.draw(
-				ctx,
-				&mut canvas,
-				&self.spritesheet,
-				self.card_rect(ctx.gfx.size(), which_card).point().into(),
-				self.hovered_card.as_ref() == Some(&which_card),
-				self.selected_card.as_ref() == Some(&which_card),
-			)?;
-		}
-		for (i, creature) in self.battlefield.foes.iter().enumerate() {
-			let which_card = WhichCard::BattlefieldFoe(i);
-			creature.card_spec.draw(
-				ctx,
-				&mut canvas,
-				&self.spritesheet,
-				self.card_rect(ctx.gfx.size(), which_card).point().into(),
-				self.hovered_card.as_ref() == Some(&which_card),
-				self.selected_card.as_ref() == Some(&which_card),
-			)?;
-		}
-
-		for (i, card) in self.hand.iter().enumerate() {
-			let which_card = WhichCard::Hand(i);
-			card.card_spec.draw(
-				ctx,
-				&mut canvas,
-				&self.spritesheet,
-				self.card_rect(ctx.gfx.size(), which_card).point().into(),
-				self.hovered_card.as_ref() == Some(&which_card),
-				self.selected_card.as_ref() == Some(&which_card),
-			)?;
-		}
+		self.draw_interface(ctx, &mut canvas)?;
 
 		if let Some(selected_card) = self.selected_card {
-			let selected_card_pos = self.card_rect(ctx.gfx.size(), selected_card).center();
+			let selected_card_pos = self.card_rect(selected_card).center();
 			let cursor_pos = ctx.mouse.position();
 			let line = graphics::Mesh::new_line(
 				ctx,
