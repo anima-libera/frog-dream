@@ -13,6 +13,13 @@ enum CardSpec {
 }
 
 impl CardSpec {
+	fn is_creature(&self) -> bool {
+		match self {
+			CardSpec::Fwog | CardSpec::DragonFly => true,
+			CardSpec::Food => false,
+		}
+	}
+
 	const DIMS: (f32, f32) = (200.0, 250.0);
 
 	fn draw(
@@ -77,6 +84,8 @@ struct Card {
 }
 
 enum InterfaceElementWhat {
+	// TODO: Use something else than `WhichCard` in these!
+	// TODO: Remove `WhichCard` from the code, it will cause confusion.
 	Card(WhichCard),
 	Creature(WhichCard),
 	FriendInsertionPossibility(usize),
@@ -133,13 +142,13 @@ impl Game {
 	fn card_rect(&self, which_card: WhichCard) -> Rect {
 		match which_card {
 			WhichCard::BattlefieldFriend(i) => Rect::new(
-				self.canvas_size.0 / 2.0 - 40.0 - CardSpec::DIMS.0 * (i as f32 + 1.0),
+				self.canvas_size.0 / 2.0 - 40.0 - (CardSpec::DIMS.0 + 10.0) * (i as f32 + 1.0),
 				100.0,
 				CardSpec::DIMS.0,
 				CardSpec::DIMS.1,
 			),
 			WhichCard::BattlefieldFoe(i) => Rect::new(
-				self.canvas_size.0 / 2.0 + 40.0 + CardSpec::DIMS.0 * i as f32,
+				self.canvas_size.0 / 2.0 + 40.0 + (CardSpec::DIMS.0 + 10.0) * i as f32,
 				100.0,
 				CardSpec::DIMS.0,
 				CardSpec::DIMS.1,
@@ -217,6 +226,31 @@ impl Game {
 				what,
 			});
 		}
+
+		let display_insert_possibilities = if let Some(WhichCard::Hand(i)) = self.selected_card {
+			let selected_card = &self.hand[i];
+			selected_card.card_spec.is_creature()
+		} else {
+			false
+		};
+		if display_insert_possibilities {
+			for i in 0..(self.battlefield.friends.len() + 1) {
+				let x = self.card_rect(WhichCard::BattlefieldFriend(i)).right() + 5.0;
+				let w = 50.0;
+				let rect = Rect::new(x - w / 2.0, 100.0 + CardSpec::DIMS.1 + 10.0, w, 50.0);
+				let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
+				let selected = false;
+				let targetable = true;
+				let what = InterfaceElementWhat::FriendInsertionPossibility(i);
+				self.interface_elements.push(InterfaceElement {
+					rect,
+					hovered,
+					selected,
+					targetable,
+					what,
+				});
+			}
+		}
 	}
 
 	fn draw_interface(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult {
@@ -251,8 +285,23 @@ impl Game {
 						elem.selected,
 					)?;
 				},
-				InterfaceElementWhat::FriendInsertionPossibility(index) => {
-					todo!()
+				InterfaceElementWhat::FriendInsertionPossibility(_index) => {
+					let rectangle = graphics::Mesh::new_polyline(
+						ctx,
+						graphics::DrawMode::stroke(3.0),
+						&[
+							Vec2::new(elem.rect.center().x, elem.rect.top()),
+							Vec2::new(elem.rect.left(), elem.rect.bottom()),
+							Vec2::new(elem.rect.right(), elem.rect.bottom()),
+							Vec2::new(elem.rect.center().x, elem.rect.top()),
+						],
+						if elem.hovered {
+							Color::YELLOW
+						} else {
+							Color::WHITE
+						},
+					)?;
+					canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
 				},
 			}
 		}
@@ -270,14 +319,13 @@ impl event::EventHandler<ggez::GameError> for Game {
 		_dy: f32,
 	) -> GameResult {
 		self.cursor_pos = Some(Vec2::new(x, y));
+		self.hovered_card = None;
 		for card in self.all_cards() {
 			if self.card_rect(card).contains(Vec2::new(x, y)) {
 				self.hovered_card = Some(card);
-				self.refresh_interface();
-				return Ok(());
+				break;
 			}
 		}
-		self.hovered_card = None;
 		self.refresh_interface();
 		Ok(())
 	}
@@ -304,6 +352,21 @@ impl event::EventHandler<ggez::GameError> for Game {
 		_y: f32,
 	) -> GameResult {
 		if let event::MouseButton::Left = button {
+			for interface_element in &self.interface_elements {
+				if interface_element.hovered {
+					if let (
+						InterfaceElementWhat::FriendInsertionPossibility(dst_friend_index),
+						Some(WhichCard::Hand(src_hand_index)),
+					) = (&interface_element.what, self.selected_card)
+					{
+						let card = self.hand.remove(src_hand_index);
+						self
+							.battlefield
+							.friends
+							.insert(*dst_friend_index, Creature { card_spec: card.card_spec });
+					}
+				}
+			}
 			self.selected_card = None;
 		}
 		self.refresh_interface();
