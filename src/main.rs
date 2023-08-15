@@ -1,3 +1,6 @@
+use std::time::Duration;
+use std::time::Instant;
+
 use ggez::conf::WindowMode;
 use ggez::conf::WindowSetup;
 use ggez::event;
@@ -95,8 +98,38 @@ struct InterfaceElement {
 	rect: Rect,
 	hovered: bool,
 	selected: bool,
-	targetable: bool,
+	_targetable: bool,
 	what: InterfaceElementWhat,
+}
+
+struct TimeProgression {
+	start: Instant,
+	duration: Duration,
+}
+
+impl TimeProgression {
+	fn with_duration(duration: Duration) -> TimeProgression {
+		TimeProgression { start: Instant::now(), duration }
+	}
+
+	fn progression(&self) -> f32 {
+		self.start.elapsed().as_secs_f32() / self.duration.as_secs_f32()
+	}
+}
+
+enum AnimationWhat {
+	PlacingCreatureFromHand {
+		src_hand_index: usize,
+		dst_friend_index: usize,
+		card: Card,
+		src_point: Vec2,
+		dst_point: Vec2,
+	},
+}
+
+struct Animation {
+	tp: TimeProgression,
+	what: AnimationWhat,
 }
 
 struct Game {
@@ -105,6 +138,7 @@ struct Game {
 	battlefield: Battlefield,
 	hand: Vec<Card>,
 	interface_elements: Vec<InterfaceElement>,
+	animations: Vec<Animation>,
 	cursor_pos: Option<Vec2>,
 	hovered_card: Option<WhichCard>,
 	selected_card: Option<WhichCard>,
@@ -133,6 +167,7 @@ impl Game {
 			battlefield: Battlefield { friends, foes },
 			hand,
 			interface_elements: vec![],
+			animations: vec![],
 			cursor_pos: None,
 			hovered_card: None,
 			selected_card: None,
@@ -140,27 +175,60 @@ impl Game {
 	}
 
 	fn card_rect(&self, which_card: WhichCard) -> Rect {
-		match which_card {
-			WhichCard::BattlefieldFriend(i) => Rect::new(
-				self.canvas_size.0 / 2.0 - 40.0 - (CardSpec::DIMS.0 + 10.0) * (i as f32 + 1.0),
-				100.0,
-				CardSpec::DIMS.0,
-				CardSpec::DIMS.1,
-			),
-			WhichCard::BattlefieldFoe(i) => Rect::new(
-				self.canvas_size.0 / 2.0 + 40.0 + (CardSpec::DIMS.0 + 10.0) * i as f32,
-				100.0,
-				CardSpec::DIMS.0,
-				CardSpec::DIMS.1,
-			),
-			WhichCard::Hand(i) => Rect::new(
-				self.canvas_size.0 / 2.0 - (CardSpec::DIMS.0 + 10.0) / 2.0 * self.hand.len() as f32
-					+ (CardSpec::DIMS.0 + 10.0) * i as f32,
-				500.0,
-				CardSpec::DIMS.0,
-				CardSpec::DIMS.1,
-			),
-		}
+		let x = match which_card {
+			WhichCard::BattlefieldFriend(i) => {
+				let mut animations_offset = 0.0;
+				for animation in self.animations.iter() {
+					match animation.what {
+						AnimationWhat::PlacingCreatureFromHand {
+							src_hand_index,
+							dst_friend_index,
+							..
+						} => {
+							if dst_friend_index <= i {
+								animations_offset += (CardSpec::DIMS.0 + 10.0) * animation.tp.progression();
+							}
+						},
+					}
+				}
+				self.canvas_size.0 / 2.0
+					- 40.0 - (CardSpec::DIMS.0 + 10.0) * (i as f32 + 1.0)
+					- animations_offset
+			},
+			WhichCard::BattlefieldFoe(i) => {
+				self.canvas_size.0 / 2.0 + 40.0 + (CardSpec::DIMS.0 + 10.0) * i as f32
+			},
+			WhichCard::Hand(i) => {
+				let mut animations_offset_len = 0.0;
+				let mut animations_offset = 0.0;
+				for animation in self.animations.iter() {
+					match animation.what {
+						AnimationWhat::PlacingCreatureFromHand {
+							src_hand_index,
+							dst_friend_index,
+							..
+						} => {
+							animations_offset_len += 1.0 - animation.tp.progression();
+							if src_hand_index <= i {
+								animations_offset +=
+									(CardSpec::DIMS.0 + 10.0) * (1.0 - animation.tp.progression());
+							}
+						},
+					}
+				}
+				self.canvas_size.0 / 2.0
+					- (CardSpec::DIMS.0 + 10.0) / 2.0 * (self.hand.len() as f32 + animations_offset_len)
+					+ (CardSpec::DIMS.0 + 10.0) * i as f32
+					+ animations_offset
+			},
+		};
+		let y = match which_card {
+			WhichCard::BattlefieldFriend(_i) => 100.0,
+			WhichCard::BattlefieldFoe(_i) => 100.0,
+			WhichCard::Hand(_i) => 500.0,
+		};
+
+		Rect::new(x, y, CardSpec::DIMS.0, CardSpec::DIMS.1)
 	}
 
 	fn all_cards(&self) -> Vec<WhichCard> {
@@ -185,13 +253,12 @@ impl Game {
 			let rect = self.card_rect(which_card);
 			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
 			let selected = self.selected_card == Some(which_card);
-			let targetable = false;
 			let what = InterfaceElementWhat::Creature(which_card);
 			self.interface_elements.push(InterfaceElement {
 				rect,
 				hovered,
 				selected,
-				targetable,
+				_targetable: false,
 				what,
 			});
 		}
@@ -200,13 +267,12 @@ impl Game {
 			let rect = self.card_rect(which_card);
 			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
 			let selected = self.selected_card == Some(which_card);
-			let targetable = false;
 			let what = InterfaceElementWhat::Creature(which_card);
 			self.interface_elements.push(InterfaceElement {
 				rect,
 				hovered,
 				selected,
-				targetable,
+				_targetable: false,
 				what,
 			});
 		}
@@ -216,13 +282,12 @@ impl Game {
 			let rect = self.card_rect(which_card);
 			let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
 			let selected = self.selected_card == Some(which_card);
-			let targetable = false;
 			let what = InterfaceElementWhat::Card(which_card);
 			self.interface_elements.push(InterfaceElement {
 				rect,
 				hovered,
 				selected,
-				targetable,
+				_targetable: false,
 				what,
 			});
 		}
@@ -240,13 +305,12 @@ impl Game {
 				let rect = Rect::new(x - w / 2.0, 100.0 + CardSpec::DIMS.1 + 10.0, w, 50.0);
 				let hovered = self.cursor_pos.is_some_and(|pos| rect.contains(pos));
 				let selected = false;
-				let targetable = true;
 				let what = InterfaceElementWhat::FriendInsertionPossibility(i);
 				self.interface_elements.push(InterfaceElement {
 					rect,
 					hovered,
 					selected,
-					targetable,
+					_targetable: true,
 					what,
 				});
 			}
@@ -309,6 +373,10 @@ impl Game {
 	}
 }
 
+fn lerp(progression: f32, start_value: f32, end_value: f32) -> f32 {
+	start_value + progression * (end_value - start_value)
+}
+
 impl event::EventHandler<ggez::GameError> for Game {
 	fn mouse_motion_event(
 		&mut self,
@@ -337,6 +405,9 @@ impl event::EventHandler<ggez::GameError> for Game {
 		_x: f32,
 		_y: f32,
 	) -> GameResult {
+		if !self.animations.is_empty() {
+			return Ok(());
+		}
 		if let event::MouseButton::Left = button {
 			self.selected_card = self.hovered_card;
 		}
@@ -351,6 +422,9 @@ impl event::EventHandler<ggez::GameError> for Game {
 		_x: f32,
 		_y: f32,
 	) -> GameResult {
+		if !self.animations.is_empty() {
+			return Ok(());
+		}
 		if let event::MouseButton::Left = button {
 			for interface_element in &self.interface_elements {
 				if interface_element.hovered {
@@ -359,11 +433,27 @@ impl event::EventHandler<ggez::GameError> for Game {
 						Some(WhichCard::Hand(src_hand_index)),
 					) = (&interface_element.what, self.selected_card)
 					{
+						let dst_friend_index = *dst_friend_index;
+						let src_point = self
+							.card_rect(WhichCard::Hand(src_hand_index))
+							.point()
+							.into();
+						let dst_point = self
+							.card_rect(WhichCard::BattlefieldFriend(dst_friend_index))
+							.point()
+							.into();
 						let card = self.hand.remove(src_hand_index);
-						self
-							.battlefield
-							.friends
-							.insert(*dst_friend_index, Creature { card_spec: card.card_spec });
+						let duration = Duration::from_secs_f32(0.2);
+						self.animations.push(Animation {
+							tp: TimeProgression::with_duration(duration),
+							what: AnimationWhat::PlacingCreatureFromHand {
+								src_hand_index,
+								dst_friend_index,
+								card,
+								src_point,
+								dst_point,
+							},
+						});
 					}
 				}
 			}
@@ -380,6 +470,32 @@ impl event::EventHandler<ggez::GameError> for Game {
 	}
 
 	fn update(&mut self, _ctx: &mut Context) -> GameResult {
+		let animations_were_going_on = !self.animations.is_empty();
+
+		// Handle the end of animations.
+		let mut ending_animation_indices = vec![];
+		for (i, animation) in self.animations.iter().enumerate() {
+			if animation.tp.progression() >= 1.0 {
+				// Animation is finished, we have to apply its final effects and remove it.
+				ending_animation_indices.push(i);
+			}
+		}
+		for i in ending_animation_indices.into_iter().rev() {
+			let animation = self.animations.remove(i);
+			match animation.what {
+				AnimationWhat::PlacingCreatureFromHand { dst_friend_index, card, .. } => {
+					self
+						.battlefield
+						.friends
+						.insert(dst_friend_index, Creature { card_spec: card.card_spec });
+				},
+			}
+		}
+
+		if animations_were_going_on {
+			self.refresh_interface();
+		}
+
 		Ok(())
 	}
 
@@ -387,6 +503,23 @@ impl event::EventHandler<ggez::GameError> for Game {
 		let mut canvas = Canvas::from_frame(ctx, graphics::Color::from([0.1, 0.2, 0.3, 1.0]));
 
 		self.draw_interface(ctx, &mut canvas)?;
+
+		// TODO: Somehow move this into `Game::refresh_interface` and produce an `InterfaceElement`
+		// instead of directly drawing a card.
+		for animation in self.animations.iter() {
+			let progression = animation.tp.progression();
+			match &animation.what {
+				AnimationWhat::PlacingCreatureFromHand { card, src_point, dst_point, .. } => {
+					let pos = Vec2::new(
+						lerp(progression, src_point.x, dst_point.x),
+						lerp(progression, src_point.y, dst_point.y),
+					);
+					card
+						.card_spec
+						.draw(ctx, &mut canvas, &self.spritesheet, pos, false, false)?;
+				},
+			}
+		}
 
 		if let Some(selected_card) = self.selected_card {
 			let selected_card_pos = self.card_rect(selected_card).center();
