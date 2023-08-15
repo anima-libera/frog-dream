@@ -26,6 +26,14 @@ impl CardSpec {
 		}
 	}
 
+	fn instanciate_to_creature(&self) -> Option<Creature> {
+		match self {
+			CardSpec::Fwog => Some(Creature { card_spec: self.clone(), food: 0, hp: 4 }),
+			CardSpec::DragonFly => Some(Creature { card_spec: self.clone(), food: 0, hp: 4 }),
+			_ => None,
+		}
+	}
+
 	const DIMS: (f32, f32) = (200.0, 250.0);
 
 	fn draw(
@@ -97,6 +105,7 @@ impl CardSpec {
 struct Creature {
 	card_spec: CardSpec,
 	food: u32,
+	hp: i32,
 }
 
 struct Battlefield {
@@ -207,8 +216,8 @@ struct WhichHandCard(usize);
 
 impl Game {
 	fn new(ctx: &Context) -> GameResult<Game> {
-		let friends = vec![Creature { card_spec: CardSpec::Fwog, food: 0 }];
-		let foes = vec![Creature { card_spec: CardSpec::DragonFly, food: 0 }];
+		let friends = vec![CardSpec::Fwog.instanciate_to_creature().unwrap()];
+		let foes = vec![CardSpec::DragonFly.instanciate_to_creature().unwrap()];
 		let hand = vec![
 			Card { card_spec: CardSpec::Fwog },
 			Card { card_spec: CardSpec::Fwog },
@@ -506,19 +515,25 @@ impl Game {
 							targetable: elem.targetable,
 						},
 					)?;
+					let hp = creature.hp;
+					canvas.draw(
+						Text::new(format!("{hp}")).set_scale(30.0),
+						DrawParam::from(Vec2::new(elem.rect.right() - 40.0, elem.rect.top() - 35.0))
+							.color(Color::from_rgb(255, 150, 180)),
+					);
 					if creature.food >= 1 {
 						let food = creature.food;
 						let sprite = Rect::new(0.0, 0.62, 0.5, 0.38);
 						canvas.draw(
 							&self.spritesheet,
 							DrawParam::default()
-								.dest(Vec2::new(elem.rect.left(), elem.rect.top() - 35.0))
+								.dest(Vec2::new(elem.rect.right() - 60.0, elem.rect.top() - 70.0))
 								.scale(Vec2::new(0.04, 0.04))
 								.src(sprite),
 						);
 						canvas.draw(
 							Text::new(format!("{food}")).set_scale(26.0),
-							DrawParam::from(Vec2::new(elem.rect.left() + 45.0, elem.rect.top() - 35.0))
+							DrawParam::from(Vec2::new(elem.rect.right() - 15.0, elem.rect.top() - 70.0))
 								.color(Color::from_rgb(255, 200, 140)),
 						);
 					}
@@ -706,7 +721,7 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 					AnimationWhat::PlacingCreatureFromHand { dst_friend_index, card, .. } => {
 						self.battlefield.friends.insert(
 							dst_friend_index,
-							Creature { card_spec: card.card_spec, food: 0 },
+							card.card_spec.instanciate_to_creature().unwrap(),
 						);
 					},
 					AnimationWhat::ApplyingFoodFromHand { dst_creature, .. } => {
