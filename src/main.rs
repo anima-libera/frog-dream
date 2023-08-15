@@ -12,6 +12,12 @@ enum CardSpec {
 	Food,
 }
 
+struct CardDrawingParams {
+	hovered: bool,
+	selected: bool,
+	targetable: bool,
+}
+
 impl CardSpec {
 	fn is_creature(&self) -> bool {
 		match self {
@@ -28,17 +34,22 @@ impl CardSpec {
 		canvas: &mut Canvas,
 		spritesheet: &Image,
 		dst: Vec2,
-		hovered: bool,
-		selected: bool,
+		params: CardDrawingParams,
 	) -> GameResult {
 		let rectangle = Mesh::new_rectangle(
 			ctx,
 			DrawMode::stroke(3.0),
 			Rect::new(dst.x, dst.y, CardSpec::DIMS.0, CardSpec::DIMS.1),
-			if hovered { Color::YELLOW } else { Color::WHITE },
+			if params.hovered {
+				Color::YELLOW
+			} else if params.targetable {
+				Color::CYAN
+			} else {
+				Color::WHITE
+			},
 		)?;
 		canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
-		if selected {
+		if params.selected {
 			let rectangle = Mesh::new_rectangle(
 				ctx,
 				DrawMode::stroke(9.0),
@@ -99,7 +110,7 @@ struct InterfaceElement {
 	rect: Rect,
 	hovered: bool,
 	selected: bool,
-	_targetable: bool,
+	targetable: bool,
 	what: InterfaceElementWhat,
 }
 
@@ -304,7 +315,7 @@ impl Game {
 				rect,
 				hovered,
 				selected: false,
-				_targetable: false,
+				targetable: false,
 				what,
 			});
 		}
@@ -317,7 +328,7 @@ impl Game {
 				rect,
 				hovered,
 				selected: false,
-				_targetable: false,
+				targetable: false,
 				what,
 			});
 		}
@@ -332,7 +343,7 @@ impl Game {
 				rect,
 				hovered,
 				selected,
-				_targetable: false,
+				targetable: false,
 				what,
 			});
 		}
@@ -360,7 +371,7 @@ impl Game {
 					rect,
 					hovered,
 					selected,
-					_targetable: true,
+					targetable: true,
 					what,
 				});
 			}
@@ -378,7 +389,7 @@ impl Game {
 						rect: Rect::new(pos.x, pos.y, CardSpec::DIMS.0, CardSpec::DIMS.1),
 						hovered: false,
 						selected: false,
-						_targetable: false,
+						targetable: false,
 						what: InterfaceElementWhat::Card(card.clone()),
 					});
 				},
@@ -396,8 +407,11 @@ impl Game {
 						canvas,
 						&self.spritesheet,
 						elem.rect.point().into(),
-						elem.hovered,
-						elem.selected,
+						CardDrawingParams {
+							hovered: elem.hovered,
+							selected: elem.selected,
+							targetable: elem.targetable,
+						},
 					)?;
 				},
 				InterfaceElementWhat::Card(card) => {
@@ -406,8 +420,11 @@ impl Game {
 						canvas,
 						&self.spritesheet,
 						elem.rect.point().into(),
-						elem.hovered,
-						elem.selected,
+						CardDrawingParams {
+							hovered: elem.hovered,
+							selected: elem.selected,
+							targetable: elem.targetable,
+						},
 					)?;
 				},
 				InterfaceElementWhat::Creature(which_creature) => {
@@ -424,8 +441,11 @@ impl Game {
 						canvas,
 						&self.spritesheet,
 						elem.rect.point().into(),
-						elem.hovered,
-						elem.selected,
+						CardDrawingParams {
+							hovered: elem.hovered,
+							selected: elem.selected,
+							targetable: elem.targetable,
+						},
 					)?;
 				},
 				InterfaceElementWhat::FriendInsertionSlot(_index) => {
@@ -532,7 +552,7 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 		}
 		if let ggez::event::MouseButton::Left = button {
 			for interface_element in &self.interface_elements {
-				if interface_element.hovered {
+				if interface_element.hovered && interface_element.targetable {
 					if let (
 						InterfaceElementWhat::FriendInsertionSlot(dst_friend_index),
 						Some(WhichHandCard(src_hand_index)),
