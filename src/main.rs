@@ -5,6 +5,15 @@ use ggez::glam::*;
 use ggez::graphics::{self, Canvas, Color, DrawMode, DrawParam, Image, Mesh, Rect, Text};
 use ggez::{Context, GameResult};
 
+enum Action {
+	Null,
+	Attack(u32),
+}
+
+struct Cycle {
+	actions: Vec<Action>,
+}
+
 #[derive(Clone)]
 enum CardSpec {
 	Fwog,
@@ -28,8 +37,18 @@ impl CardSpec {
 
 	fn instanciate_to_creature(&self) -> Option<Creature> {
 		match self {
-			CardSpec::Fwog => Some(Creature { card_spec: self.clone(), food: 0, hp: 4 }),
-			CardSpec::DragonFly => Some(Creature { card_spec: self.clone(), food: 0, hp: 4 }),
+			CardSpec::Fwog => Some(Creature {
+				card_spec: self.clone(),
+				food: 0,
+				hp: 4,
+				cycle: Cycle { actions: vec![Action::Null, Action::Attack(1)] },
+			}),
+			CardSpec::DragonFly => Some(Creature {
+				card_spec: self.clone(),
+				food: 0,
+				hp: 4,
+				cycle: Cycle { actions: vec![Action::Null, Action::Null, Action::Attack(2)] },
+			}),
 			_ => None,
 		}
 	}
@@ -106,6 +125,7 @@ struct Creature {
 	card_spec: CardSpec,
 	food: u32,
 	hp: i32,
+	cycle: Cycle,
 }
 
 struct Battlefield {
@@ -515,6 +535,33 @@ impl Game {
 							targetable: elem.targetable,
 						},
 					)?;
+					let mut action_y = elem.rect.top() + 70.0;
+					for action in creature.cycle.actions.iter() {
+						let x = elem.rect.right() - 78.0;
+						let rectangle = Mesh::new_rectangle(
+							ctx,
+							DrawMode::stroke(2.0),
+							Rect::new(x - 4.0, action_y - 2.0, 70.0, 20.0),
+							Color::WHITE,
+						)?;
+						canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+						match action {
+							Action::Null => {
+								canvas.draw(
+									Text::new("n").set_scale(18.0),
+									DrawParam::from(Vec2::new(x, action_y)).color(Color::WHITE),
+								);
+							},
+							Action::Attack(damages) => {
+								canvas.draw(
+									Text::new(format!("att {damages}")).set_scale(18.0),
+									DrawParam::from(Vec2::new(x, action_y))
+										.color(Color::from_rgb(255, 200, 150)),
+								);
+							},
+						}
+						action_y += 26.0;
+					}
 					let hp = creature.hp;
 					canvas.draw(
 						Text::new(format!("{hp}")).set_scale(30.0),
@@ -539,7 +586,7 @@ impl Game {
 					}
 				},
 				InterfaceElementWhat::FriendInsertionSlot(_index) => {
-					let rectangle = Mesh::new_polyline(
+					let triangle = Mesh::new_polyline(
 						ctx,
 						DrawMode::stroke(3.0),
 						&[
@@ -554,7 +601,7 @@ impl Game {
 							Color::CYAN
 						},
 					)?;
-					canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+					canvas.draw(&triangle, Vec2::new(0.0, 0.0));
 				},
 				InterfaceElementWhat::Food => {
 					let sprite = Rect::new(0.0, 0.62, 0.5, 0.38);
