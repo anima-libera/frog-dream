@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::format;
 use std::time::{Duration, Instant};
 
 use ggez::graphics::{self, Canvas, Color, DrawMode, DrawParam, Image, Mesh, Rect, Text};
@@ -64,6 +65,8 @@ mod pin_point {
 use pin_point::PinPoint;
 
 struct VisElemPos {
+	/// Mode depth means closer to the background (covered by what is closer to the foreground).
+	depth: u32,
 	/// What point in the *element being drawn* is supposed to be drawn at `coords`?
 	pin_point: PinPoint,
 	coords: ScreenCoords,
@@ -134,6 +137,7 @@ impl Game {
 			VisElem {
 				parent: None,
 				pos: VisElemPos {
+					depth: 1000,
 					pin_point: PinPoint::CENTER_CENTER,
 					coords: ScreenCoords::new(0.0, 0.0),
 					in_parent_pin_point: PinPoint::CENTER_CENTER,
@@ -146,6 +150,7 @@ impl Game {
 			VisElem {
 				parent: Some(rect_id),
 				pos: VisElemPos {
+					depth: 500,
 					pin_point: PinPoint::CENTER_CENTER,
 					coords: ScreenCoords::new(0.0, 0.0),
 					in_parent_pin_point: PinPoint::TOP_RIGHT,
@@ -173,6 +178,36 @@ impl Game {
 		let coords = in_parent_coords + self_coords;
 		Rect::new(coords.x, coords.y, self_size.x, self_size.y)
 	}
+
+	fn draw_vis_elem(&self, ctx: &Context, canvas: &mut Canvas, id: Id) -> GameResult {
+		let vis_elem = self.vis_elems.get(&id).unwrap();
+		let rect = self.vis_elem_actual_rect(id);
+
+		match vis_elem.what {
+			VisElemWhat::PinkRect => {
+				let rectangle = Mesh::new_rectangle(
+					ctx,
+					DrawMode::stroke(10.0),
+					rect,
+					Color::from_rgb(255, 100, 200),
+				)?;
+				canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+			},
+			VisElemWhat::GreenDot => {
+				let circle = Mesh::new_circle(
+					ctx,
+					DrawMode::fill(),
+					rect.center(),
+					rect.w,
+					0.1,
+					Color::from_rgb(100, 255, 200),
+				)?;
+				canvas.draw(&circle, Vec2::new(0.0, 0.0));
+			},
+		}
+
+		Ok(())
+	}
 }
 
 impl ggez::event::EventHandler<ggez::GameError> for Game {
@@ -188,34 +223,20 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 	fn draw(&mut self, ctx: &mut Context) -> GameResult {
 		let mut canvas = Canvas::from_frame(ctx, graphics::Color::from([0.1, 0.2, 0.3, 1.0]));
 
-		let ids = self.vis_elems.keys();
-		for id in ids.into_iter() {
-			let vis_elem = self.vis_elems.get(id).unwrap();
-			let rect = self.vis_elem_actual_rect(*id);
-
-			match vis_elem.what {
-				VisElemWhat::PinkRect => {
-					let rectangle = Mesh::new_rectangle(
-						ctx,
-						DrawMode::stroke(10.0),
-						rect,
-						Color::from_rgb(255, 100, 200),
-					)?;
-					canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
-				},
-				VisElemWhat::GreenDot => {
-					let circle = Mesh::new_circle(
-						ctx,
-						DrawMode::fill(),
-						rect.center(),
-						rect.w,
-						0.1,
-						Color::from_rgb(100, 255, 200),
-					)?;
-					canvas.draw(&circle, Vec2::new(0.0, 0.0));
-				},
-			}
+		// Draw all visual elements,
+		// iterating over the set of their ids without having `self` borrowed,
+		// and deeper elements first.
+		let mut ids: Vec<_> = self.vis_elems.keys().collect();
+		ids.sort_unstable_by_key(|id| self.vis_elems.get(id).unwrap().pos.depth);
+		for id in ids.into_iter().rev().copied() {
+			self.draw_vis_elem(ctx, &mut canvas, id)?;
 		}
+
+		let fps = ctx.time.fps().round() as i64;
+		canvas.draw(
+			Text::new(format!("FPS: {fps}")).set_scale(26.0),
+			DrawParam::from(Vec2::new(0.0, 0.0)).color(Color::WHITE),
+		);
 
 		canvas.finish(ctx)?;
 		Ok(())
