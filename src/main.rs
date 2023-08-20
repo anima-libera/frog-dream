@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::fmt::format;
 use std::time::{Duration, Instant};
 
 use ggez::graphics::{self, Canvas, Color, DrawMode, DrawParam, Image, Mesh, Rect, Text};
+use ggez::input::keyboard::KeyCode;
 use ggez::{glam::*, Context, GameError, GameResult};
 
 type ScreenCoords = Vec2;
@@ -64,12 +64,14 @@ mod pin_point {
 }
 use pin_point::PinPoint;
 
+#[derive(Clone)]
 struct VisElemPos {
 	/// Mode depth means closer to the background (covered by what is closer to the foreground).
 	depth: u32,
 	/// What point in the *element being drawn* is supposed to be drawn at `coords`?
 	pin_point: PinPoint,
 	coords: ScreenCoords,
+	parent: Option<Id>,
 	/// What point in the *parent element* is `coords` supposed to be?
 	in_parent_pin_point: PinPoint,
 }
@@ -88,9 +90,17 @@ impl VisElemWhat {
 	}
 }
 
+enum Animation {
+	MoveTo {
+		dst_pos: VisElemPos,
+		/// In pixels per second.
+		speed: f32,
+	},
+}
+
 struct VisElem {
 	pos: VisElemPos,
-	parent: Option<Id>,
+	animations: Vec<Animation>,
 	what: VisElemWhat,
 }
 
@@ -121,67 +131,76 @@ struct Game {
 	id_generator: IdGenerator,
 	context_size: (f32, f32),
 	vis_elems: HashMap<Id, VisElem>,
+	test_rect_ids: Vec<Id>,
+	test_dot_id: Id,
 }
 
 impl Game {
 	fn new(ctx: &Context) -> Result<Game, GameError> {
-		let mut game = Game {
-			id_generator: IdGenerator::new(),
-			context_size: ctx.gfx.drawable_size(),
-			vis_elems: HashMap::new(),
-		};
+		let mut id_generator = IdGenerator::new();
+		let mut vis_elems = HashMap::new();
 
-		let rect_id = game.id_generator.generate_id();
-		game.vis_elems.insert(
-			rect_id,
-			VisElem {
-				parent: None,
-				pos: VisElemPos {
-					depth: 1000,
-					pin_point: PinPoint::CENTER_CENTER,
-					coords: ScreenCoords::new(0.0, 0.0),
-					in_parent_pin_point: PinPoint::CENTER_CENTER,
+		let mut test_rect_ids = vec![];
+		for i in 0..3 {
+			let test_rect_id = id_generator.generate_id();
+			test_rect_ids.push(test_rect_id);
+			vis_elems.insert(
+				test_rect_id,
+				VisElem {
+					animations: vec![],
+					pos: VisElemPos {
+						depth: 1000,
+						pin_point: PinPoint::CENTER_CENTER,
+						coords: ScreenCoords::new(-300.0 + 300.0 * i as f32, 0.0),
+						parent: None,
+						in_parent_pin_point: PinPoint::CENTER_CENTER,
+					},
+					what: VisElemWhat::PinkRect,
 				},
-				what: VisElemWhat::PinkRect,
-			},
-		);
-		game.vis_elems.insert(
-			game.id_generator.generate_id(),
+			);
+		}
+
+		let test_dot_id = id_generator.generate_id();
+		vis_elems.insert(
+			test_dot_id,
 			VisElem {
-				parent: Some(rect_id),
+				animations: vec![],
 				pos: VisElemPos {
 					depth: 500,
 					pin_point: PinPoint::CENTER_CENTER,
-					coords: ScreenCoords::new(0.0, 0.0),
-					in_parent_pin_point: PinPoint::TOP_RIGHT,
+					coords: ScreenCoords::new(0.0, -200.0),
+					parent: None,
+					in_parent_pin_point: PinPoint::CENTER_CENTER,
 				},
 				what: VisElemWhat::GreenDot,
 			},
 		);
 
-		Ok(game)
+		Ok(Game {
+			id_generator,
+			context_size: ctx.gfx.drawable_size(),
+			vis_elems,
+			test_rect_ids,
+			test_dot_id,
+		})
 	}
 
-	fn vis_elem_actual_rect(&self, id: Id) -> Rect {
-		let vis_elem = self.vis_elems.get(&id).unwrap();
-		let parent_rect = if let Some(parent_id) = vis_elem.parent {
-			self.vis_elem_actual_rect(parent_id)
+	fn vis_elem_actual_rect(&self, pos: VisElemPos, dims: ScreenDimensions) -> Rect {
+		let parent_rect = if let Some(parent_id) = pos.parent {
+			let parent = self.vis_elems.get(&parent_id).unwrap();
+			self.vis_elem_actual_rect(parent.pos.clone(), parent.what.dimensions())
 		} else {
 			Rect::new(0.0, 0.0, self.context_size.0, self.context_size.1)
 		};
-		let self_size: ScreenDimensions = vis_elem.what.dimensions();
-		let in_parent_coords = vis_elem.pos.in_parent_pin_point.where_in_rect(parent_rect);
-		let self_coords = vis_elem
-			.pos
-			.pin_point
-			.actual_top_left_coords(vis_elem.pos.coords, self_size);
+		let in_parent_coords = pos.in_parent_pin_point.where_in_rect(parent_rect);
+		let self_coords = pos.pin_point.actual_top_left_coords(pos.coords, dims);
 		let coords = in_parent_coords + self_coords;
-		Rect::new(coords.x, coords.y, self_size.x, self_size.y)
+		Rect::new(coords.x, coords.y, dims.x, dims.y)
 	}
 
 	fn draw_vis_elem(&self, ctx: &Context, canvas: &mut Canvas, id: Id) -> GameResult {
 		let vis_elem = self.vis_elems.get(&id).unwrap();
-		let rect = self.vis_elem_actual_rect(id);
+		let rect = self.vis_elem_actual_rect(vis_elem.pos.clone(), vis_elem.what.dimensions());
 
 		match vis_elem.what {
 			VisElemWhat::PinkRect => {
@@ -211,12 +230,83 @@ impl Game {
 }
 
 impl ggez::event::EventHandler<ggez::GameError> for Game {
+	fn key_down_event(
+		&mut self,
+		ctx: &mut Context,
+		input: ggez::input::keyboard::KeyInput,
+		_repeated: bool,
+	) -> GameResult {
+		if let Some(keycode) = input.keycode {
+			match keycode {
+				KeyCode::Space => {
+					self
+						.vis_elems
+						.get_mut(&self.test_dot_id)
+						.unwrap()
+						.animations
+						.push(Animation::MoveTo {
+							dst_pos: VisElemPos {
+								depth: 500,
+								pin_point: PinPoint::CENTER_CENTER,
+								coords: Vec2::new(0.0, 0.0),
+								parent: Some(self.test_rect_ids[0]),
+								in_parent_pin_point: PinPoint::TOP_RIGHT,
+							},
+							speed: 1000.0,
+						});
+				},
+				KeyCode::Escape => ctx.request_quit(),
+				_ => {},
+			}
+		}
+		Ok(())
+	}
+
 	fn resize_event(&mut self, ctx: &mut Context, _width: f32, _height: f32) -> GameResult {
 		self.context_size = ctx.gfx.drawable_size();
 		Ok(())
 	}
 
-	fn update(&mut self, _ctx: &mut Context) -> GameResult {
+	fn update(&mut self, ctx: &mut Context) -> GameResult {
+		let dt_in_seconds = ctx.time.delta().as_secs_f32();
+
+		let ids: Vec<_> = self.vis_elems.keys().copied().collect();
+		for id in ids.into_iter() {
+			let mut vis_elem = self.vis_elems.remove(&id).unwrap();
+			let mut finished_animation_indices = vec![];
+
+			for (animation_i, animation) in vis_elem.animations.iter().enumerate() {
+				match animation {
+					Animation::MoveTo { dst_pos, speed } => {
+						let dims = vis_elem.what.dimensions();
+						let dst_rect = self.vis_elem_actual_rect(dst_pos.clone(), dims);
+						let cur_rect = self.vis_elem_actual_rect(vis_elem.pos.clone(), dims);
+						let dst_top_left: Vec2 = dst_rect.point().into();
+						let cur_top_left: Vec2 = cur_rect.point().into();
+						let motion: Vec2 =
+							(dst_top_left - cur_top_left).normalize_or_zero() * (*speed * dt_in_seconds);
+
+						if dst_top_left == cur_top_left
+							|| (cur_top_left + motion - dst_top_left).length()
+								>= (dst_top_left - cur_top_left).length()
+						{
+							vis_elem.pos = dst_pos.clone();
+							finished_animation_indices.push(animation_i);
+						} else {
+							vis_elem.pos = dst_pos.clone();
+							vis_elem.pos.coords = cur_top_left - dst_top_left + motion;
+						}
+					},
+				}
+			}
+
+			for animation_i in finished_animation_indices.into_iter().rev() {
+				vis_elem.animations.remove(animation_i);
+			}
+
+			self.vis_elems.insert(id, vis_elem);
+		}
+
 		Ok(())
 	}
 
@@ -226,9 +316,9 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 		// Draw all visual elements,
 		// iterating over the set of their ids without having `self` borrowed,
 		// and deeper elements first.
-		let mut ids: Vec<_> = self.vis_elems.keys().collect();
+		let mut ids: Vec<_> = self.vis_elems.keys().copied().collect();
 		ids.sort_unstable_by_key(|id| self.vis_elems.get(id).unwrap().pos.depth);
-		for id in ids.into_iter().rev().copied() {
+		for id in ids.into_iter().rev() {
 			self.draw_vis_elem(ctx, &mut canvas, id)?;
 		}
 
@@ -245,7 +335,11 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 
 fn main() -> GameResult {
 	let (ctx, event_loop) = ggez::ContextBuilder::new("frog_dream", "Anima")
-		.window_setup(ggez::conf::WindowSetup::default().title("Frog Dream"))
+		.window_setup(
+			ggez::conf::WindowSetup::default()
+				.title("Frog Dream")
+				.vsync(true),
+		)
 		.window_mode(
 			ggez::conf::WindowMode::default()
 				.resizable(true)
