@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use ggez::graphics::{self, Canvas, Color, DrawMode, DrawParam, Image, Mesh, Rect, Text};
 use ggez::input::keyboard::KeyCode;
@@ -77,15 +76,13 @@ struct VisElemPos {
 }
 
 enum VisElemWhat {
-	PinkRect,
-	GreenDot,
+	Card(Card),
 }
 
 impl VisElemWhat {
 	fn dimensions(&self) -> ScreenDimensions {
 		match self {
-			VisElemWhat::PinkRect => (60.0, 100.0).into(),
-			VisElemWhat::GreenDot => (20.0, 20.0).into(),
+			VisElemWhat::Card(_) => (200.0, 300.0).into(),
 		}
 	}
 }
@@ -102,6 +99,15 @@ struct VisElem {
 	pos: VisElemPos,
 	animations: Vec<Animation>,
 	what: VisElemWhat,
+}
+
+impl VisElem {
+	fn move_to(&mut self, dst_pos: VisElemPos, speed: f32) {
+		self
+			.animations
+			.retain(|animation| !matches!(animation, Animation::MoveTo { .. }));
+		self.animations.push(Animation::MoveTo { dst_pos, speed });
+	}
 }
 
 mod id_generator {
@@ -127,12 +133,48 @@ mod id_generator {
 
 use id_generator::{Id, IdGenerator};
 
+#[derive(Clone)]
+struct Entity {
+	test_color: Color,
+}
+
+#[derive(Clone)]
+struct EntityOnBattlefield {
+	entity: Entity,
+	vis_elem_id: Id,
+}
+
+#[derive(Clone)]
+enum Card {
+	Entity(Entity),
+}
+
+#[derive(Clone)]
+struct CardInHand {
+	card: Card,
+	vis_elem_id: Id,
+}
+
+struct Battlefield {
+	friends: Vec<EntityOnBattlefield>,
+	foes: Vec<EntityOnBattlefield>,
+}
+
+/// Insertion position in the battlefield
+/// (in the front or back of a team or between two members of a team).
+///
+/// The `usize` is the index that the thing to be inserted will have upon insertion.
+enum BattlefieldInsertPos {
+	Friend(usize),
+	Foe(usize),
+}
+
 struct Game {
 	id_generator: IdGenerator,
 	context_size: (f32, f32),
 	vis_elems: HashMap<Id, VisElem>,
-	test_rect_ids: Vec<Id>,
-	test_dot_id: Id,
+	hand: Vec<CardInHand>,
+	battlefield: Battlefield,
 }
 
 impl Game {
@@ -140,49 +182,135 @@ impl Game {
 		let mut id_generator = IdGenerator::new();
 		let mut vis_elems = HashMap::new();
 
-		let mut test_rect_ids = vec![];
-		for i in 0..3 {
-			let test_rect_id = id_generator.generate_id();
-			test_rect_ids.push(test_rect_id);
+		let mut hand = vec![];
+		for _i in 0..3 {
+			let card_id = id_generator.generate_id();
+			let card = Card::Entity(Entity { test_color: Color::from_rgb(0, 255, 255) });
+			hand.push(CardInHand { card: card.clone(), vis_elem_id: card_id });
 			vis_elems.insert(
-				test_rect_id,
+				card_id,
 				VisElem {
 					animations: vec![],
 					pos: VisElemPos {
 						depth: 1000,
-						pin_point: PinPoint::CENTER_CENTER,
-						coords: ScreenCoords::new(-300.0 + 300.0 * i as f32, 0.0),
+						pin_point: PinPoint::TOP_CENTER,
+						coords: ScreenCoords::new(0.0, 0.0),
 						parent: None,
-						in_parent_pin_point: PinPoint::CENTER_CENTER,
+						in_parent_pin_point: PinPoint::BOTTOM_CENTER,
 					},
-					what: VisElemWhat::PinkRect,
+					what: VisElemWhat::Card(card),
 				},
 			);
 		}
 
-		let test_dot_id = id_generator.generate_id();
-		vis_elems.insert(
-			test_dot_id,
-			VisElem {
-				animations: vec![],
-				pos: VisElemPos {
-					depth: 500,
-					pin_point: PinPoint::CENTER_CENTER,
-					coords: ScreenCoords::new(0.0, -200.0),
-					parent: None,
-					in_parent_pin_point: PinPoint::CENTER_CENTER,
-				},
-				what: VisElemWhat::GreenDot,
-			},
-		);
-
-		Ok(Game {
+		let mut game = Game {
 			id_generator,
 			context_size: ctx.gfx.drawable_size(),
 			vis_elems,
-			test_rect_ids,
-			test_dot_id,
-		})
+			hand,
+			battlefield: Battlefield { friends: vec![], foes: vec![] },
+		};
+
+		game.spawn_entity_on_battlefield(
+			Entity { test_color: Color::from_rgb(255, 150, 200) },
+			BattlefieldInsertPos::Friend(0),
+		);
+		game.spawn_entity_on_battlefield(
+			Entity { test_color: Color::from_rgb(80, 255, 150) },
+			BattlefieldInsertPos::Foe(0),
+		);
+		game.update_pos_of_entities_in_battlefield();
+
+		game.update_pos_of_cards_in_hand();
+
+		Ok(game)
+	}
+
+	fn spawn_entity_on_battlefield(&mut self, entity: Entity, insert_pos: BattlefieldInsertPos) {
+		let vis_elem = VisElem {
+			pos: VisElemPos {
+				depth: 1000,
+				pin_point: PinPoint::BOTTOM_CENTER,
+				coords: ScreenCoords::new(0.0, 0.0),
+				parent: None,
+				in_parent_pin_point: PinPoint::TOP_CENTER,
+			},
+			animations: vec![],
+			what: VisElemWhat::Card(Card::Entity(entity.clone())),
+		};
+		let vis_elem_id = self.id_generator.generate_id();
+		self.vis_elems.insert(vis_elem_id, vis_elem);
+		let entity_on_battlefield = EntityOnBattlefield { entity, vis_elem_id };
+		match insert_pos {
+			BattlefieldInsertPos::Friend(friend_i) => {
+				self
+					.battlefield
+					.friends
+					.insert(friend_i, entity_on_battlefield);
+			},
+			BattlefieldInsertPos::Foe(foe_i) => {
+				self.battlefield.foes.insert(foe_i, entity_on_battlefield);
+			},
+		}
+	}
+
+	fn update_pos_of_cards_in_hand(&mut self) {
+		for hand_i in 0..self.hand.len() {
+			let x = -((self.hand.len() as f32 - 1.0) * 220.0) / 2.0 + hand_i as f32 * 220.0;
+			let vis_elem = self
+				.vis_elems
+				.get_mut(&self.hand[hand_i].vis_elem_id)
+				.unwrap();
+			vis_elem.move_to(
+				VisElemPos {
+					depth: 1000,
+					pin_point: PinPoint::CENTER_CENTER,
+					coords: Vec2::new(x, 250.0),
+					parent: None,
+					in_parent_pin_point: PinPoint::CENTER_CENTER,
+				},
+				1500.0,
+			);
+		}
+	}
+
+	fn update_pos_of_entities_in_battlefield(&mut self) {
+		let len = (self.battlefield.friends.len() + self.battlefield.foes.len()) as f32;
+		for friend_i in 0..self.battlefield.friends.len() {
+			let x = -((len - 1.0) * 220.0 + 60.0) / 2.0 + friend_i as f32 * 220.0;
+			let vis_elem = self
+				.vis_elems
+				.get_mut(&self.battlefield.friends[friend_i].vis_elem_id)
+				.unwrap();
+			vis_elem.move_to(
+				VisElemPos {
+					depth: 1000,
+					pin_point: PinPoint::CENTER_CENTER,
+					coords: Vec2::new(x, -250.0),
+					parent: None,
+					in_parent_pin_point: PinPoint::CENTER_CENTER,
+				},
+				1500.0,
+			);
+		}
+		for foe_i in 0..self.battlefield.foes.len() {
+			let x = -((len - 1.0) * 220.0 + 60.0) / 2.0
+				+ 60.0 + (self.battlefield.friends.len() + foe_i) as f32 * 220.0;
+			let vis_elem = self
+				.vis_elems
+				.get_mut(&self.battlefield.foes[foe_i].vis_elem_id)
+				.unwrap();
+			vis_elem.move_to(
+				VisElemPos {
+					depth: 1000,
+					pin_point: PinPoint::CENTER_CENTER,
+					coords: Vec2::new(x, -250.0),
+					parent: None,
+					in_parent_pin_point: PinPoint::CENTER_CENTER,
+				},
+				1500.0,
+			);
+		}
 	}
 
 	fn vis_elem_actual_rect(&self, pos: VisElemPos, dims: ScreenDimensions) -> Rect {
@@ -203,26 +331,21 @@ impl Game {
 		let rect = self.vis_elem_actual_rect(vis_elem.pos.clone(), vis_elem.what.dimensions());
 
 		match vis_elem.what {
-			VisElemWhat::PinkRect => {
-				let rectangle = Mesh::new_rectangle(
-					ctx,
-					DrawMode::stroke(10.0),
-					rect,
-					Color::from_rgb(255, 100, 200),
-				)?;
+			VisElemWhat::Card(Card::Entity(Entity { test_color })) => {
+				let rectangle = Mesh::new_rectangle(ctx, DrawMode::stroke(10.0), rect, test_color)?;
 				canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
 			},
-			VisElemWhat::GreenDot => {
-				let circle = Mesh::new_circle(
-					ctx,
-					DrawMode::fill(),
-					rect.center(),
-					rect.w,
-					0.1,
-					Color::from_rgb(100, 255, 200),
-				)?;
-				canvas.draw(&circle, Vec2::new(0.0, 0.0));
-			},
+			//VisElemWhat::GreenDot => {
+			//	let circle = Mesh::new_circle(
+			//		ctx,
+			//		DrawMode::fill(),
+			//		rect.center(),
+			//		rect.w,
+			//		0.1,
+			//		Color::from_rgb(100, 255, 200),
+			//	)?;
+			//	canvas.draw(&circle, Vec2::new(0.0, 0.0));
+			//},
 		}
 
 		Ok(())
@@ -234,26 +357,25 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 		&mut self,
 		ctx: &mut Context,
 		input: ggez::input::keyboard::KeyInput,
-		_repeated: bool,
+		repeated: bool,
 	) -> GameResult {
+		if repeated {
+			return Ok(());
+		}
+
 		if let Some(keycode) = input.keycode {
 			match keycode {
 				KeyCode::Space => {
-					self
-						.vis_elems
-						.get_mut(&self.test_dot_id)
-						.unwrap()
-						.animations
-						.push(Animation::MoveTo {
-							dst_pos: VisElemPos {
-								depth: 500,
-								pin_point: PinPoint::CENTER_CENTER,
-								coords: Vec2::new(0.0, 0.0),
-								parent: Some(self.test_rect_ids[0]),
-								in_parent_pin_point: PinPoint::TOP_RIGHT,
-							},
-							speed: 1000.0,
-						});
+					//self.vis_elems.get_mut(&self.test_dot_id).unwrap().move_to(
+					//	VisElemPos {
+					//		depth: 500,
+					//		pin_point: PinPoint::CENTER_CENTER,
+					//		coords: Vec2::new(0.0, 0.0),
+					//		parent: Some(self.hand[0].vis_elem_id),
+					//		in_parent_pin_point: PinPoint::TOP_RIGHT,
+					//	},
+					//	1500.0,
+					//);
 				},
 				KeyCode::Escape => ctx.request_quit(),
 				_ => {},
@@ -285,16 +407,17 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 						let cur_top_left: Vec2 = cur_rect.point().into();
 						let motion: Vec2 =
 							(dst_top_left - cur_top_left).normalize_or_zero() * (*speed * dt_in_seconds);
+						let dist_if_full_motion = (cur_top_left + motion).distance(dst_top_left);
+						let cur_dist = cur_top_left.distance(dst_top_left);
 
-						if dst_top_left == cur_top_left
-							|| (cur_top_left + motion - dst_top_left).length()
-								>= (dst_top_left - cur_top_left).length()
-						{
+						if dst_top_left == cur_top_left || dist_if_full_motion >= cur_dist {
 							vis_elem.pos = dst_pos.clone();
 							finished_animation_indices.push(animation_i);
 						} else {
-							vis_elem.pos = dst_pos.clone();
-							vis_elem.pos.coords = cur_top_left - dst_top_left + motion;
+							vis_elem.pos.parent = None;
+							vis_elem.pos.pin_point = PinPoint::TOP_LEFT;
+							vis_elem.pos.in_parent_pin_point = PinPoint::TOP_LEFT;
+							vis_elem.pos.coords = Vec2::from(cur_rect.point()) + motion;
 						}
 					},
 				}
@@ -343,7 +466,8 @@ fn main() -> GameResult {
 		.window_mode(
 			ggez::conf::WindowMode::default()
 				.resizable(true)
-				.dimensions(1200.0, 900.0),
+				.dimensions(1200.0, 800.0)
+				.maximized(true),
 		)
 		.build()?;
 	let game = Game::new(&ctx)?;
