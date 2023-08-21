@@ -175,6 +175,8 @@ struct Game {
 	vis_elems: HashMap<Id, VisElem>,
 	hand: Vec<CardInHand>,
 	battlefield: Battlefield,
+	cursor_pos: Option<Vec2>,
+	hovered_vis_elem_id: Option<Id>,
 }
 
 impl Game {
@@ -209,6 +211,8 @@ impl Game {
 			vis_elems,
 			hand,
 			battlefield: Battlefield { friends: vec![], foes: vec![] },
+			cursor_pos: None,
+			hovered_vis_elem_id: None,
 		};
 
 		game.spawn_entity_on_battlefield(
@@ -265,7 +269,7 @@ impl Game {
 				VisElemPos {
 					depth: 1000,
 					pin_point: PinPoint::CENTER_CENTER,
-					coords: Vec2::new(x, 250.0),
+					coords: Vec2::new(x, 225.0),
 					parent: None,
 					in_parent_pin_point: PinPoint::CENTER_CENTER,
 				},
@@ -286,7 +290,7 @@ impl Game {
 				VisElemPos {
 					depth: 1000,
 					pin_point: PinPoint::CENTER_CENTER,
-					coords: Vec2::new(x, -250.0),
+					coords: Vec2::new(x, -225.0),
 					parent: None,
 					in_parent_pin_point: PinPoint::CENTER_CENTER,
 				},
@@ -304,7 +308,7 @@ impl Game {
 				VisElemPos {
 					depth: 1000,
 					pin_point: PinPoint::CENTER_CENTER,
-					coords: Vec2::new(x, -250.0),
+					coords: Vec2::new(x, -225.0),
 					parent: None,
 					in_parent_pin_point: PinPoint::CENTER_CENTER,
 				},
@@ -329,10 +333,12 @@ impl Game {
 	fn draw_vis_elem(&self, ctx: &Context, canvas: &mut Canvas, id: Id) -> GameResult {
 		let vis_elem = self.vis_elems.get(&id).unwrap();
 		let rect = self.vis_elem_actual_rect(vis_elem.pos.clone(), vis_elem.what.dimensions());
+		let hovered = self.hovered_vis_elem_id == Some(id);
 
 		match vis_elem.what {
 			VisElemWhat::Card(Card::Entity(Entity { test_color })) => {
-				let rectangle = Mesh::new_rectangle(ctx, DrawMode::stroke(10.0), rect, test_color)?;
+				let color = if hovered { Color::YELLOW } else { test_color };
+				let rectangle = Mesh::new_rectangle(ctx, DrawMode::stroke(10.0), rect, color)?;
 				canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
 			},
 			//VisElemWhat::GreenDot => {
@@ -353,6 +359,27 @@ impl Game {
 }
 
 impl ggez::event::EventHandler<ggez::GameError> for Game {
+	fn mouse_motion_event(
+		&mut self,
+		_ctx: &mut Context,
+		x: f32,
+		y: f32,
+		_dx: f32,
+		_dy: f32,
+	) -> GameResult {
+		self.cursor_pos = Some(Vec2::new(x, y));
+
+		self.hovered_vis_elem_id = None;
+		for (id, vis_elem) in self.vis_elems.iter() {
+			let rect = self.vis_elem_actual_rect(vis_elem.pos.clone(), vis_elem.what.dimensions());
+			if rect.contains(self.cursor_pos.unwrap()) {
+				self.hovered_vis_elem_id = Some(*id);
+			}
+		}
+
+		Ok(())
+	}
+
 	fn key_down_event(
 		&mut self,
 		ctx: &mut Context,
