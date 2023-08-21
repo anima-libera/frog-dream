@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use ggez::event::MouseButton;
 use ggez::graphics::{self, Canvas, Color, DrawMode, DrawParam, Image, Mesh, Rect, Text};
 use ggez::input::keyboard::KeyCode;
 use ggez::{glam::*, Context, GameError, GameResult};
@@ -177,6 +178,7 @@ struct Game {
 	battlefield: Battlefield,
 	cursor_pos: Option<Vec2>,
 	hovered_vis_elem_id: Option<Id>,
+	selected_vis_elem_id: Option<Id>,
 }
 
 impl Game {
@@ -213,10 +215,11 @@ impl Game {
 			battlefield: Battlefield { friends: vec![], foes: vec![] },
 			cursor_pos: None,
 			hovered_vis_elem_id: None,
+			selected_vis_elem_id: None,
 		};
 
 		game.spawn_entity_on_battlefield(
-			Entity { test_color: Color::from_rgb(255, 150, 200) },
+			Entity { test_color: Color::from_rgb(255, 255, 150) },
 			BattlefieldInsertPos::Friend(0),
 		);
 		game.spawn_entity_on_battlefield(
@@ -334,10 +337,17 @@ impl Game {
 		let vis_elem = self.vis_elems.get(&id).unwrap();
 		let rect = self.vis_elem_actual_rect(vis_elem.pos.clone(), vis_elem.what.dimensions());
 		let hovered = self.hovered_vis_elem_id == Some(id);
+		let selected = self.selected_vis_elem_id == Some(id);
 
 		match vis_elem.what {
 			VisElemWhat::Card(Card::Entity(Entity { test_color })) => {
-				let color = if hovered { Color::YELLOW } else { test_color };
+				let color = if selected {
+					Color::from_rgb(255, 150, 180)
+				} else if hovered {
+					Color::YELLOW
+				} else {
+					test_color
+				};
 				let rectangle = Mesh::new_rectangle(ctx, DrawMode::stroke(10.0), rect, color)?;
 				canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
 			},
@@ -377,6 +387,32 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 			}
 		}
 
+		Ok(())
+	}
+
+	fn mouse_button_down_event(
+		&mut self,
+		_ctx: &mut Context,
+		button: MouseButton,
+		_x: f32,
+		_y: f32,
+	) -> GameResult {
+		if let MouseButton::Left = button {
+			self.selected_vis_elem_id = self.hovered_vis_elem_id;
+		}
+		Ok(())
+	}
+
+	fn mouse_button_up_event(
+		&mut self,
+		_ctx: &mut Context,
+		button: MouseButton,
+		_x: f32,
+		_y: f32,
+	) -> GameResult {
+		if let MouseButton::Left = button {
+			self.selected_vis_elem_id = None;
+		}
 		Ok(())
 	}
 
@@ -470,6 +506,27 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 		ids.sort_unstable_by_key(|id| self.vis_elems.get(id).unwrap().pos.depth);
 		for id in ids.into_iter().rev() {
 			self.draw_vis_elem(ctx, &mut canvas, id)?;
+		}
+
+		// Draw a line from the selected card (if any) to the cursor to make it clear that
+		// we are going to do something with the selected card and whatever is going to be
+		// under the cursor when we release the mouse button.
+		if let (Some(selected_vis_elem_id), Some(cursor_pos)) =
+			(self.selected_vis_elem_id, self.cursor_pos)
+		{
+			let selected_vis_elem = self.vis_elems.get(&selected_vis_elem_id).unwrap();
+			let rect = self.vis_elem_actual_rect(
+				selected_vis_elem.pos.clone(),
+				selected_vis_elem.what.dimensions(),
+			);
+			let selected_vis_elem_center = rect.center();
+			let line = Mesh::new_line(
+				ctx,
+				&[selected_vis_elem_center, cursor_pos.into()],
+				12.0,
+				Color::from_rgb(255, 150, 180),
+			)?;
+			canvas.draw(&line, Vec2::new(0.0, 0.0));
 		}
 
 		let fps = ctx.time.fps().round() as i64;
