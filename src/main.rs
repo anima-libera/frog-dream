@@ -78,12 +78,14 @@ struct VisElemPos {
 
 enum VisElemWhat {
 	Card(Card),
+	BattlefieldInsertPos(BattlefieldInsertPos),
 }
 
 impl VisElemWhat {
 	fn dimensions(&self) -> ScreenDimensions {
 		match self {
 			VisElemWhat::Card(_) => (200.0, 300.0).into(),
+			VisElemWhat::BattlefieldInsertPos(_) => (40.0, 50.0).into(),
 		}
 	}
 }
@@ -100,6 +102,8 @@ struct VisElem {
 	pos: VisElemPos,
 	animations: Vec<Animation>,
 	what: VisElemWhat,
+	selectable: bool,
+	targetable: bool,
 }
 
 impl VisElem {
@@ -159,6 +163,7 @@ struct CardInHand {
 struct Battlefield {
 	friends: Vec<EntityOnBattlefield>,
 	foes: Vec<EntityOnBattlefield>,
+	friend_insert_pos_vis_elem_ids: Vec<Id>,
 }
 
 /// Insertion position in the battlefield
@@ -203,6 +208,8 @@ impl Game {
 						in_parent_pin_point: PinPoint::BOTTOM_CENTER,
 					},
 					what: VisElemWhat::Card(card),
+					selectable: true,
+					targetable: false,
 				},
 			);
 		}
@@ -212,7 +219,11 @@ impl Game {
 			context_size: ctx.gfx.drawable_size(),
 			vis_elems,
 			hand,
-			battlefield: Battlefield { friends: vec![], foes: vec![] },
+			battlefield: Battlefield {
+				friends: vec![],
+				foes: vec![],
+				friend_insert_pos_vis_elem_ids: vec![],
+			},
 			cursor_pos: None,
 			hovered_vis_elem_id: None,
 			selected_vis_elem_id: None,
@@ -244,6 +255,8 @@ impl Game {
 			},
 			animations: vec![],
 			what: VisElemWhat::Card(Card::Entity(entity.clone())),
+			selectable: false,
+			targetable: false,
 		};
 		let vis_elem_id = self.id_generator.generate_id();
 		self.vis_elems.insert(vis_elem_id, vis_elem);
@@ -318,6 +331,34 @@ impl Game {
 				1500.0,
 			);
 		}
+
+		for id in self.battlefield.friend_insert_pos_vis_elem_ids.iter() {
+			self.vis_elems.remove(id);
+		}
+		self.battlefield.friend_insert_pos_vis_elem_ids.clear();
+		for friend_insert_pos_i in 0..(self.battlefield.friends.len() + 1) {
+			let id = self.id_generator.generate_id();
+			self.battlefield.friend_insert_pos_vis_elem_ids.push(id);
+			let x = -((len - 1.0) * 220.0 + 60.0) / 2.0 + (friend_insert_pos_i as f32 - 0.5) * 220.0;
+			self.vis_elems.insert(
+				id,
+				VisElem {
+					pos: VisElemPos {
+						depth: 900,
+						pin_point: PinPoint::CENTER_CENTER,
+						coords: Vec2::new(x, -40.0),
+						parent: None,
+						in_parent_pin_point: PinPoint::CENTER_CENTER,
+					},
+					animations: vec![],
+					what: VisElemWhat::BattlefieldInsertPos(BattlefieldInsertPos::Friend(
+						friend_insert_pos_i,
+					)),
+					selectable: false,
+					targetable: false,
+				},
+			);
+		}
 	}
 
 	fn vis_elem_actual_rect(&self, pos: VisElemPos, dims: ScreenDimensions) -> Rect {
@@ -351,6 +392,26 @@ impl Game {
 				let rectangle = Mesh::new_rectangle(ctx, DrawMode::stroke(10.0), rect, color)?;
 				canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
 			},
+			VisElemWhat::BattlefieldInsertPos(_) => {
+				if vis_elem.targetable {
+					let triangle = Mesh::new_polyline(
+						ctx,
+						DrawMode::stroke(3.0),
+						&[
+							Vec2::new(rect.center().x, rect.top()),
+							Vec2::new(rect.left(), rect.bottom()),
+							Vec2::new(rect.right(), rect.bottom()),
+							Vec2::new(rect.center().x, rect.top()),
+						],
+						if hovered {
+							Color::from_rgb(180, 255, 0)
+						} else {
+							Color::CYAN
+						},
+					)?;
+					canvas.draw(&triangle, Vec2::new(0.0, 0.0));
+				}
+			}
 			//VisElemWhat::GreenDot => {
 			//	let circle = Mesh::new_circle(
 			//		ctx,
@@ -398,7 +459,19 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 		_y: f32,
 	) -> GameResult {
 		if let MouseButton::Left = button {
-			self.selected_vis_elem_id = self.hovered_vis_elem_id;
+			if let Some(hovered_vis_elem_id) = self.hovered_vis_elem_id {
+				let hovered_vis_elem = self.vis_elems.get(&hovered_vis_elem_id).unwrap();
+				if hovered_vis_elem.selectable {
+					self.selected_vis_elem_id = self.hovered_vis_elem_id;
+
+					for insert_pos_vis_elem_id in self.battlefield.friend_insert_pos_vis_elem_ids.iter()
+					{
+						let insert_pos_vis_elem =
+							self.vis_elems.get_mut(&insert_pos_vis_elem_id).unwrap();
+						insert_pos_vis_elem.targetable = true;
+					}
+				}
+			}
 		}
 		Ok(())
 	}
@@ -412,6 +485,10 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 	) -> GameResult {
 		if let MouseButton::Left = button {
 			self.selected_vis_elem_id = None;
+
+			for (_id, vis_elem) in self.vis_elems.iter_mut() {
+				vis_elem.targetable = false;
+			}
 		}
 		Ok(())
 	}
