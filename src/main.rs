@@ -77,14 +77,14 @@ struct VisElemPos {
 }
 
 enum VisElemWhat {
-	Card(Card),
+	Card { card: Card, where_in_hand: Option<usize> },
 	BattlefieldInsertPos(BattlefieldInsertPos),
 }
 
 impl VisElemWhat {
 	fn dimensions(&self) -> ScreenDimensions {
 		match self {
-			VisElemWhat::Card(_) => (200.0, 300.0).into(),
+			VisElemWhat::Card { .. } => (200.0, 300.0).into(),
 			VisElemWhat::BattlefieldInsertPos(_) => (40.0, 50.0).into(),
 		}
 	}
@@ -166,14 +166,19 @@ struct Battlefield {
 	friend_insert_pos_vis_elem_ids: Vec<Id>,
 }
 
-/// Insertion position in the battlefield
-/// (in the front or back of a team or between two members of a team).
-///
-/// The `usize` is the index that the thing to be inserted will have upon insertion.
-enum BattlefieldInsertPos {
+/// The position of something that is on the battlefield.
+#[derive(Clone, Copy)]
+enum BattlefieldPos {
 	Friend(usize),
 	Foe(usize),
 }
+
+/// Insertion position in the battlefield
+/// (in the front or back of a team or between two members of a team).
+///
+/// The position in it is the position that the thing being inserted will have upon insertion.
+#[derive(Clone, Copy)]
+struct BattlefieldInsertPos(BattlefieldPos);
 
 struct Game {
 	id_generator: IdGenerator,
@@ -192,7 +197,7 @@ impl Game {
 		let mut vis_elems = HashMap::new();
 
 		let mut hand = vec![];
-		for _i in 0..3 {
+		for i in 0..3 {
 			let card_id = id_generator.generate_id();
 			let card = Card::Entity(Entity { test_color: Color::from_rgb(0, 255, 255) });
 			hand.push(CardInHand { card: card.clone(), vis_elem_id: card_id });
@@ -207,7 +212,7 @@ impl Game {
 						parent: None,
 						in_parent_pin_point: PinPoint::BOTTOM_CENTER,
 					},
-					what: VisElemWhat::Card(card),
+					what: VisElemWhat::Card { card, where_in_hand: Some(i) },
 					selectable: true,
 					targetable: false,
 				},
@@ -231,11 +236,11 @@ impl Game {
 
 		game.spawn_entity_on_battlefield(
 			Entity { test_color: Color::from_rgb(255, 255, 150) },
-			BattlefieldInsertPos::Friend(0),
+			BattlefieldInsertPos(BattlefieldPos::Friend(0)),
 		);
 		game.spawn_entity_on_battlefield(
 			Entity { test_color: Color::from_rgb(80, 255, 150) },
-			BattlefieldInsertPos::Foe(0),
+			BattlefieldInsertPos(BattlefieldPos::Foe(0)),
 		);
 		game.update_pos_of_entities_in_battlefield();
 
@@ -254,7 +259,7 @@ impl Game {
 				in_parent_pin_point: PinPoint::TOP_CENTER,
 			},
 			animations: vec![],
-			what: VisElemWhat::Card(Card::Entity(entity.clone())),
+			what: VisElemWhat::Card { card: Card::Entity(entity.clone()), where_in_hand: None },
 			selectable: false,
 			targetable: false,
 		};
@@ -262,13 +267,13 @@ impl Game {
 		self.vis_elems.insert(vis_elem_id, vis_elem);
 		let entity_on_battlefield = EntityOnBattlefield { entity, vis_elem_id };
 		match insert_pos {
-			BattlefieldInsertPos::Friend(friend_i) => {
+			BattlefieldInsertPos(BattlefieldPos::Friend(friend_i)) => {
 				self
 					.battlefield
 					.friends
 					.insert(friend_i, entity_on_battlefield);
 			},
-			BattlefieldInsertPos::Foe(foe_i) => {
+			BattlefieldInsertPos(BattlefieldPos::Foe(foe_i)) => {
 				self.battlefield.foes.insert(foe_i, entity_on_battlefield);
 			},
 		}
@@ -291,6 +296,12 @@ impl Game {
 				},
 				1500.0,
 			);
+			match vis_elem.what {
+				VisElemWhat::Card { ref mut where_in_hand, .. } => {
+					*where_in_hand = Some(hand_i);
+				},
+				_ => panic!(),
+			}
 		}
 	}
 
@@ -351,8 +362,8 @@ impl Game {
 						in_parent_pin_point: PinPoint::CENTER_CENTER,
 					},
 					animations: vec![],
-					what: VisElemWhat::BattlefieldInsertPos(BattlefieldInsertPos::Friend(
-						friend_insert_pos_i,
+					what: VisElemWhat::BattlefieldInsertPos(BattlefieldInsertPos(
+						BattlefieldPos::Friend(friend_insert_pos_i),
 					)),
 					selectable: false,
 					targetable: false,
@@ -381,7 +392,7 @@ impl Game {
 		let selected = self.selected_vis_elem_id == Some(id);
 
 		match vis_elem.what {
-			VisElemWhat::Card(Card::Entity(Entity { test_color })) => {
+			VisElemWhat::Card { card: Card::Entity(Entity { test_color }), .. } => {
 				let color = if selected {
 					Color::from_rgb(255, 150, 180)
 				} else if hovered {
@@ -411,18 +422,7 @@ impl Game {
 					)?;
 					canvas.draw(&triangle, Vec2::new(0.0, 0.0));
 				}
-			}
-			//VisElemWhat::GreenDot => {
-			//	let circle = Mesh::new_circle(
-			//		ctx,
-			//		DrawMode::fill(),
-			//		rect.center(),
-			//		rect.w,
-			//		0.1,
-			//		Color::from_rgb(100, 255, 200),
-			//	)?;
-			//	canvas.draw(&circle, Vec2::new(0.0, 0.0));
-			//},
+			},
 		}
 
 		Ok(())
@@ -466,8 +466,7 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 
 					for insert_pos_vis_elem_id in self.battlefield.friend_insert_pos_vis_elem_ids.iter()
 					{
-						let insert_pos_vis_elem =
-							self.vis_elems.get_mut(&insert_pos_vis_elem_id).unwrap();
+						let insert_pos_vis_elem = self.vis_elems.get_mut(insert_pos_vis_elem_id).unwrap();
 						insert_pos_vis_elem.targetable = true;
 					}
 				}
@@ -484,6 +483,61 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 		_y: f32,
 	) -> GameResult {
 		if let MouseButton::Left = button {
+			if let (Some(selected_vis_elem_id), Some(hovered_vis_elem_id)) =
+				(self.selected_vis_elem_id, self.hovered_vis_elem_id)
+			{
+				let selected_card_where_in_hand =
+					match self.vis_elems.get(&selected_vis_elem_id).unwrap().what {
+						VisElemWhat::Card { where_in_hand, .. } => where_in_hand,
+						_ => None,
+					};
+				let targeted_insert_pos = match self.vis_elems.get(&hovered_vis_elem_id).unwrap().what {
+					VisElemWhat::BattlefieldInsertPos(insert_pos) => Some(insert_pos),
+					_ => None,
+				};
+
+				if let (Some(selected_card_where_in_hand), Some(targeted_insert_pos)) =
+					(selected_card_where_in_hand, targeted_insert_pos)
+				{
+					let card_that_is_played = self.hand.remove(selected_card_where_in_hand);
+
+					match self
+						.vis_elems
+						.get_mut(&card_that_is_played.vis_elem_id)
+						.unwrap()
+						.what
+					{
+						VisElemWhat::Card { ref mut where_in_hand, .. } => {
+							*where_in_hand = None;
+						},
+						_ => panic!(),
+					}
+					self
+						.vis_elems
+						.get_mut(&card_that_is_played.vis_elem_id)
+						.unwrap()
+						.selectable = false;
+
+					let entity = match card_that_is_played {
+						CardInHand { card: Card::Entity(entity), .. } => entity,
+					};
+					match targeted_insert_pos {
+						BattlefieldInsertPos(BattlefieldPos::Friend(friend_i)) => {
+							self.battlefield.friends.insert(
+								friend_i,
+								EntityOnBattlefield {
+									entity,
+									vis_elem_id: card_that_is_played.vis_elem_id,
+								},
+							);
+						},
+						_ => unimplemented!(),
+					}
+					self.update_pos_of_cards_in_hand();
+					self.update_pos_of_entities_in_battlefield();
+				}
+			}
+
 			self.selected_vis_elem_id = None;
 
 			for (_id, vis_elem) in self.vis_elems.iter_mut() {
@@ -505,18 +559,7 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 
 		if let Some(keycode) = input.keycode {
 			match keycode {
-				KeyCode::Space => {
-					//self.vis_elems.get_mut(&self.test_dot_id).unwrap().move_to(
-					//	VisElemPos {
-					//		depth: 500,
-					//		pin_point: PinPoint::CENTER_CENTER,
-					//		coords: Vec2::new(0.0, 0.0),
-					//		parent: Some(self.hand[0].vis_elem_id),
-					//		in_parent_pin_point: PinPoint::TOP_RIGHT,
-					//	},
-					//	1500.0,
-					//);
-				},
+				KeyCode::Space => {},
 				KeyCode::Escape => ctx.request_quit(),
 				_ => {},
 			}
