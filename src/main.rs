@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ggez::event::MouseButton;
-use ggez::graphics::{self, Canvas, Color, DrawMode, DrawParam, Image, Mesh, Rect, Text};
+use ggez::graphics::{Canvas, Color, DrawMode, DrawParam, Image, Mesh, Rect, Text};
 use ggez::input::keyboard::KeyCode;
 use ggez::{glam::*, Context, GameError, GameResult};
 
@@ -138,9 +138,33 @@ mod id_generator {
 
 use id_generator::{Id, IdGenerator};
 
+#[derive(Clone, Copy)]
+enum Sprite {
+	Fwog,
+	DragonFly,
+	Food,
+	Night,
+	Chicken,
+	Snek,
+	Tea,
+	Phantasmagoric,
+}
+
+impl Sprite {
+	fn rect_in_spritesheet(self) -> Rect {
+		match self {
+			Sprite::Fwog => Rect::new(0.02, 0.02, 0.155, 0.17),
+			Sprite::DragonFly => Rect::new(0.22, 0.02, 0.2, 0.2),
+			Sprite::Chicken => Rect::new(0.01, 0.25, 0.2, 0.28),
+			Sprite::Snek => Rect::new(0.24, 0.25, 0.18, 0.27),
+			_ => todo!(),
+		}
+	}
+}
+
 #[derive(Clone)]
 struct Entity {
-	test_color: Color,
+	sprite: Sprite,
 }
 
 #[derive(Clone)]
@@ -181,6 +205,7 @@ enum BattlefieldPos {
 struct BattlefieldInsertPos(BattlefieldPos);
 
 struct Game {
+	spritesheet: Image,
 	id_generator: IdGenerator,
 	context_size: (f32, f32),
 	vis_elems: HashMap<Id, VisElem>,
@@ -199,7 +224,8 @@ impl Game {
 		let mut hand = vec![];
 		for i in 0..3 {
 			let card_id = id_generator.generate_id();
-			let card = Card::Entity(Entity { test_color: Color::from_rgb(0, 255, 255) });
+			let card =
+				Card::Entity(Entity { sprite: [Sprite::Fwog, Sprite::Chicken, Sprite::Snek][i] });
 			hand.push(CardInHand { card: card.clone(), vis_elem_id: card_id });
 			vis_elems.insert(
 				card_id,
@@ -219,7 +245,10 @@ impl Game {
 			);
 		}
 
+		let spritesheet = Image::from_bytes(ctx, include_bytes!("../assets/spritesheet.png"))?;
+
 		let mut game = Game {
+			spritesheet,
 			id_generator,
 			context_size: ctx.gfx.drawable_size(),
 			vis_elems,
@@ -235,11 +264,11 @@ impl Game {
 		};
 
 		game.spawn_entity_on_battlefield(
-			Entity { test_color: Color::from_rgb(255, 255, 150) },
+			Entity { sprite: Sprite::Fwog },
 			BattlefieldInsertPos(BattlefieldPos::Friend(0)),
 		);
 		game.spawn_entity_on_battlefield(
-			Entity { test_color: Color::from_rgb(80, 255, 150) },
+			Entity { sprite: Sprite::DragonFly },
 			BattlefieldInsertPos(BattlefieldPos::Foe(0)),
 		);
 		game.update_pos_of_entities_in_battlefield();
@@ -392,16 +421,31 @@ impl Game {
 		let selected = self.selected_vis_elem_id == Some(id);
 
 		match vis_elem.what {
-			VisElemWhat::Card { card: Card::Entity(Entity { test_color }), .. } => {
+			VisElemWhat::Card { card: Card::Entity(Entity { sprite }), .. } => {
 				let color = if selected {
 					Color::from_rgb(255, 150, 180)
 				} else if hovered {
 					Color::YELLOW
 				} else {
-					test_color
+					Color::BLACK
 				};
-				let rectangle = Mesh::new_rectangle(ctx, DrawMode::stroke(10.0), rect, color)?;
+				let rectangle =
+					Mesh::new_rectangle(ctx, DrawMode::fill(), rect, Color::from_rgb(150, 200, 255))?;
 				canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+				let rectangle = Mesh::new_rectangle(
+					ctx,
+					DrawMode::stroke(if selected { 10.0 } else { 5.0 }),
+					rect,
+					color,
+				)?;
+				canvas.draw(&rectangle, Vec2::new(0.0, 0.0));
+				canvas.draw(
+					&self.spritesheet,
+					DrawParam::default()
+						.dest(Vec2::new(rect.x + 10.0, rect.y + 30.0 + 10.0))
+						.scale(Vec2::new(0.3, 0.3))
+						.src(sprite.rect_in_spritesheet()),
+				);
 			},
 			VisElemWhat::BattlefieldInsertPos(_) => {
 				if vis_elem.targetable {
@@ -617,7 +661,7 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 	}
 
 	fn draw(&mut self, ctx: &mut Context) -> GameResult {
-		let mut canvas = Canvas::from_frame(ctx, graphics::Color::from([0.1, 0.2, 0.3, 1.0]));
+		let mut canvas = Canvas::from_frame(ctx, Color::from([0.5, 0.3, 0.8, 1.0]));
 
 		// Draw all visual elements,
 		// iterating over the set of their ids without having `self` borrowed,
