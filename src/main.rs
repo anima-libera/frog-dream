@@ -79,6 +79,7 @@ struct VisElemPos {
 enum VisElemWhat {
 	Card { card: Card, where_in_hand: Option<usize> },
 	BattlefieldInsertPos(BattlefieldInsertPos),
+	ActOrder(u32),
 }
 
 impl VisElemWhat {
@@ -86,6 +87,7 @@ impl VisElemWhat {
 		match self {
 			VisElemWhat::Card { .. } => (200.0, 300.0).into(),
 			VisElemWhat::BattlefieldInsertPos(_) => (40.0, 50.0).into(),
+			VisElemWhat::ActOrder(_) => (30.0, 30.0).into(),
 		}
 	}
 }
@@ -170,6 +172,7 @@ struct Entity {
 #[derive(Clone)]
 struct EntityOnBattlefield {
 	entity: Entity,
+	act_order: Option<(u32, Id)>,
 	vis_elem_id: Id,
 }
 
@@ -204,6 +207,11 @@ enum BattlefieldPos {
 #[derive(Clone, Copy)]
 struct BattlefieldInsertPos(BattlefieldPos);
 
+enum Phase {
+	Player,
+	Entity(u32), // contains the act order
+}
+
 struct Game {
 	spritesheet: Image,
 	id_generator: IdGenerator,
@@ -214,6 +222,7 @@ struct Game {
 	cursor_pos: Option<Vec2>,
 	hovered_vis_elem_id: Option<Id>,
 	selected_vis_elem_id: Option<Id>,
+	phase: Phase,
 }
 
 impl Game {
@@ -261,6 +270,7 @@ impl Game {
 			cursor_pos: None,
 			hovered_vis_elem_id: None,
 			selected_vis_elem_id: None,
+			phase: Phase::Player,
 		};
 
 		game.spawn_entity_on_battlefield(
@@ -294,7 +304,7 @@ impl Game {
 		};
 		let vis_elem_id = self.id_generator.generate_id();
 		self.vis_elems.insert(vis_elem_id, vis_elem);
-		let entity_on_battlefield = EntityOnBattlefield { entity, vis_elem_id };
+		let entity_on_battlefield = EntityOnBattlefield { entity, act_order: None, vis_elem_id };
 		match insert_pos {
 			BattlefieldInsertPos(BattlefieldPos::Friend(friend_i)) => {
 				self
@@ -337,7 +347,8 @@ impl Game {
 	fn update_pos_of_entities_in_battlefield(&mut self) {
 		let len = (self.battlefield.friends.len() + self.battlefield.foes.len()) as f32;
 		for friend_i in 0..self.battlefield.friends.len() {
-			let x = -((len - 1.0) * 220.0 + 60.0) / 2.0 + friend_i as f32 * 220.0;
+			let x = -((len - 1.0) * 220.0 + 60.0) / 2.0
+				+ (self.battlefield.friends.len() - 1 - friend_i) as f32 * 220.0;
 			let vis_elem = self
 				.vis_elems
 				.get_mut(&self.battlefield.friends[friend_i].vis_elem_id)
@@ -379,7 +390,8 @@ impl Game {
 		for friend_insert_pos_i in 0..(self.battlefield.friends.len() + 1) {
 			let id = self.id_generator.generate_id();
 			self.battlefield.friend_insert_pos_vis_elem_ids.push(id);
-			let x = -((len - 1.0) * 220.0 + 60.0) / 2.0 + (friend_insert_pos_i as f32 - 0.5) * 220.0;
+			let x = -((len - 1.0) * 220.0 + 60.0) / 2.0
+				+ ((self.battlefield.friends.len() - friend_insert_pos_i) as f32 - 0.5) * 220.0;
 			self.vis_elems.insert(
 				id,
 				VisElem {
@@ -398,6 +410,75 @@ impl Game {
 					targetable: false,
 				},
 			);
+		}
+	}
+
+	fn end_player_phase(&mut self) {
+		self.give_act_order_to_entities_in_battlefield();
+		self.switch_to_next_to_act();
+	}
+
+	fn switch_to_next_to_act(&mut self) {
+		let smallest_act_order = self
+			.battlefield
+			.friends
+			.iter()
+			.chain(self.battlefield.foes.iter())
+			.filter_map(|entity| entity.act_order.map(|(act_order, _)| act_order))
+			.min();
+		if let Some(smallest_act_order) = smallest_act_order {
+			self.phase = Phase::Entity(smallest_act_order);
+		} else {
+			self.phase = Phase::Player;
+		}
+	}
+
+	fn give_act_order_to_entities_in_battlefield(&mut self) {
+		let mut index = 0;
+		let mut act_order = 1;
+		loop {
+			let mut still_found_someone = false;
+			for pos in [BattlefieldPos::Foe(index), BattlefieldPos::Friend(index)].into_iter() {
+				let entity = match pos {
+					BattlefieldPos::Foe(index) => self.battlefield.foes.get_mut(index),
+					BattlefieldPos::Friend(index) => self.battlefield.friends.get_mut(index),
+				};
+				if let Some(entity) = entity {
+					let vis_elem_id = self.id_generator.generate_id();
+					self.vis_elems.insert(
+						vis_elem_id,
+						VisElem {
+							pos: VisElemPos {
+								depth: 800,
+								pin_point: PinPoint::BOTTOM_CENTER,
+								coords: Vec2::new(0.0, 0.0),
+								parent: None,
+								in_parent_pin_point: PinPoint::TOP_CENTER,
+							},
+							animations: vec![Animation::MoveTo {
+								dst_pos: VisElemPos {
+									depth: 800,
+									pin_point: PinPoint::BOTTOM_CENTER,
+									coords: Vec2::new(0.0, -10.0),
+									parent: Some(entity.vis_elem_id),
+									in_parent_pin_point: PinPoint::TOP_CENTER,
+								},
+								speed: 1500.0,
+							}],
+							what: VisElemWhat::ActOrder(act_order),
+							selectable: false,
+							targetable: false,
+						},
+					);
+					entity.act_order = Some((act_order, vis_elem_id));
+					still_found_someone = true;
+					act_order += 1;
+				}
+			}
+			if !still_found_someone {
+				break;
+			}
+			index += 1;
 		}
 	}
 
@@ -466,6 +547,12 @@ impl Game {
 					)?;
 					canvas.draw(&triangle, Vec2::new(0.0, 0.0));
 				}
+			},
+			VisElemWhat::ActOrder(act_order) => {
+				canvas.draw(
+					Text::new(format!("{act_order}")).set_scale(40.0),
+					DrawParam::from(Vec2::from(rect.point())).color(Color::WHITE),
+				);
 			},
 		}
 
@@ -543,6 +630,8 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 				if let (Some(selected_card_where_in_hand), Some(targeted_insert_pos)) =
 					(selected_card_where_in_hand, targeted_insert_pos)
 				{
+					// A friend card is placed onto the battlefield.
+
 					let card_that_is_played = self.hand.remove(selected_card_where_in_hand);
 
 					match self
@@ -571,6 +660,7 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 								friend_i,
 								EntityOnBattlefield {
 									entity,
+									act_order: None,
 									vis_elem_id: card_that_is_played.vis_elem_id,
 								},
 							);
@@ -579,6 +669,8 @@ impl ggez::event::EventHandler<ggez::GameError> for Game {
 					}
 					self.update_pos_of_cards_in_hand();
 					self.update_pos_of_entities_in_battlefield();
+
+					self.end_player_phase();
 				}
 			}
 
